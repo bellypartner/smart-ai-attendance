@@ -38,6 +38,8 @@ app.use(express.json());
 // In production, Express serves the Vite build from dist/
 // 'dist' is one level up from server/ in the repo root
 const DIST = path.join(__dirname, '..', 'dist');
+console.log(`DIST path: ${DIST}`);
+console.log(`PORT: ${process.env.PORT}`);
 app.use(express.static(DIST));
 
 // ── HELPERS ──────────────────────────────────────────────────
@@ -671,8 +673,9 @@ app.get('*', (req, res) => {
 });
 
 // ── START ─────────────────────────────────────────────────────
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 8080;
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`SmartAi Attendance running on port ${PORT}`);
-  console.log(`Serving React build from: ${DIST}`);
+  console.log(`Environment: ${process.env.NODE_ENV}`);
+  console.log(`Serving React from: ${DIST}`);
 });
