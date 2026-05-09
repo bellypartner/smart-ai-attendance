@@ -1273,17 +1273,6 @@ function Toast({msg,type}){
   return<div style={{position:"fixed",top:76,left:"50%",transform:"translateX(-50%)",background:bg,color:C.white,padding:"12px 22px",borderRadius:14,fontWeight:700,fontSize:14,zIndex:9999,maxWidth:"90vw",boxShadow:"0 8px 32px rgba(0,0,0,.22)",animation:"fadeUp .3s ease",whiteSpace:"nowrap"}}>{msg}</div>;
 }
 
-// helpers used above
-function genQR(branchId){return JSON.stringify({branchId,token:"SMARTAI_V3",app:"3SL"});}
-function resolveShift(schedule,shiftTemplates,employeeId,date,employees){
-  const emp=employees.find(e=>e.id===employeeId);
-  const ov=schedule.find(s=>s.employeeId===employeeId&&s.date===date&&s.override===true);
-  if(ov)return{entry:ov,shift:shiftTemplates.find(s=>s.id===ov.shiftId)||null,source:"override"};
-  const sc=schedule.find(s=>s.employeeId===employeeId&&s.date===date&&!s.override);
-  if(sc)return{entry:sc,shift:shiftTemplates.find(s=>s.id===sc.shiftId)||null,source:"schedule"};
-  if(emp?.defaultShiftId){const sh=shiftTemplates.find(s=>s.id===emp.defaultShiftId);return{entry:null,shift:sh||null,source:"default"};}
-  return{entry:null,shift:null,source:"none"};
-}
 
 // ── STYLE CONSTANTS ───────────────────────────────────────────────────────────
 const S={
