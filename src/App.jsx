@@ -572,6 +572,9 @@ function AdminApp({user, notify, page, setPage, activeOrgId, setActiveOrgId, onL
     adm_qr: <AdminQR notify={notify} activeOrgId={activeOrgId}/>,
     adm_reports: <AdminReports user={user} notify={notify} activeOrgId={activeOrgId}/>,
     adm_edit: <AdminEditAtt user={user} notify={notify} activeOrgId={activeOrgId}/>,
+    adm_att_table: <AdminAttendanceTable user={user} notify={notify} activeOrgId={activeOrgId}/>,
+    adm_leave_hist: <AdminLeaveHistory user={user} notify={notify} activeOrgId={activeOrgId}/>,
+    adm_daily: <AdminDailyBoard notify={notify} activeOrgId={activeOrgId}/>,
     adm_settings: <AdminSettings user={user} notify={notify} activeOrgId={activeOrgId}/>,
   };
   return(
