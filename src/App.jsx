@@ -896,7 +896,7 @@ function StaffForm({emp, branches, shifts, activeOrgId, user, notify, onSave, on
     name:emp?.name||"",phone:emp?.phone||"",password:"",branch_id:emp?.branch_id||branches[0]?.id||"",
     role:emp?.role||"employee",designation:emp?.designation||"",salary:emp?.salary||"",
     default_shift_id:emp?.default_shift_id||"",manager_id:emp?.manager_id||"",
-    date_of_joining:emp?.date_of_joining||today(),employee_code:emp?.employee_code||"",
+    date_of_joining: emp?.date_of_joining ? String(emp.date_of_joining).split('T')[0] : today(),
   });
   const set=(k,v)=>setF(p=>({...p,[k]:v}));
   return(
@@ -1860,7 +1860,564 @@ function AdminLeaveHistory({ user, notify, activeOrgId }) {
   );
 }
 
-// ── DAILY ATTENDANCE BOARD ─────────────────────────────────────────────────
+// ============================================================
+// FIXED AdminAttendanceTable, AdminLeaveHistory, AdminDailyBoard
+// Fixes:
+// 1. Attendance edit correctly changes A→P and shows times
+// 2. Date of joining preserved on staff edit
+// 3. Real-time refresh after edit
+// 4. Check-in/out times showing correctly
+// 5. Manually added attendance shows P not A
+// ============================================================
+
+function AdminAttendanceTable({ user, notify, activeOrgId }) {
+  const [view, setView] = useState("day");
+  const [selDate, setSelDate] = useState(today());
+  const [selBranch, setSelBranch] = useState("all");
+  const [selMonth, setSelMonth] = useState(() => {
+    const n = new Date();
+    return `${n.getFullYear()}-${pad(n.getMonth() + 1)}`;
+  });
+  const [employees, setEmployees] = useState([]);
+  const [branches, setBranches] = useState([]);
+  const [records, setRecords] = useState([]);
+  const [leaves, setLeaves] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [editRec, setEditRec] = useState(null);
+  const [editForm, setEditForm] = useState({ cin: "", cout: "", notes: "" });
+  const [saving, setSaving] = useState(false);
+
+  const loadAll = async () => {
+    setLoading(true);
+    try {
+      const [e, b] = await Promise.all([
+        GET("/api/employees", { org_id: activeOrgId }),
+        GET("/api/branches", { org_id: activeOrgId }),
+      ]);
+      setEmployees(e || []);
+      setBranches(b || []);
+    } catch (err) { notify(err.message, "error"); }
+    finally { setLoading(false); }
+  };
+
+  const loadRecords = async () => {
+    try {
+      let from, to;
+      if (view === "day") { from = selDate; to = selDate; }
+      else {
+        const [y, m] = selMonth.split("-").map(Number);
+        from = `${y}-${pad(m)}-01`;
+        to = new Date(y, m, 0).toISOString().split("T")[0];
+      }
+      const [att, lv] = await Promise.all([
+        GET("/api/attendance", { from, to, org_id: activeOrgId }),
+        GET("/api/leaves", { from, to, org_id: activeOrgId }),
+      ]);
+      setRecords(att || []);
+      setLeaves(lv || []);
+    } catch (err) { notify(err.message, "error"); }
+  };
+
+  useEffect(() => { if (activeOrgId) loadAll(); }, [activeOrgId]);
+  useEffect(() => { if (activeOrgId) loadRecords(); }, [view, selDate, selMonth, activeOrgId]);
+
+  // Get attendance record for employee+date
+  // API returns one row per employee per day with check_in_time + check_out_time
+  const getRec = (empId, date) =>
+    records.find(r => r.employee_id === empId && r.date === date);
+
+  const getLeave = (empId, date) =>
+    leaves.find(l => l.employee_id === empId && l.date === date);
+
+  const getStatus = (empId, date) => {
+    const leave = getLeave(empId, date);
+    if (leave) {
+      const lc = { casual: { label:"CL", color:"#7c3aed", bg:"#ede9fe" }, unauthorized: { label:"UL", color:"#dc2626", bg:"#fee2e2" }, noshow: { label:"NS", color:"#ea580c", bg:"#ffedd5" } };
+      return { type: "leave", ...(lc[leave.type] || { label: "L", color: "#7c3aed", bg: "#ede9fe" }) };
+    }
+    const rec = getRec(empId, date);
+    if (rec && rec.check_in_time) {
+      return rec.is_late
+        ? { type: "late", label: `L${rec.late_mins || ""}`, color: "#d97706", bg: "#fef3c7", rec }
+        : { type: "present", label: "P", color: "#16a34a", bg: "#dcfce7", rec };
+    }
+    return { type: "absent", label: "A", color: "#dc2626", bg: "#fee2e2" };
+  };
+
+  const openEdit = (empId, date, empName) => {
+    const rec = getRec(empId, date);
+    setEditRec({ employee_id: empId, date, name: empName });
+    setEditForm({
+      cin: rec?.check_in_time ? String(rec.check_in_time).slice(0, 5) : "",
+      cout: rec?.check_out_time ? String(rec.check_out_time).slice(0, 5) : "",
+      notes: rec?.notes || "",
+    });
+  };
+
+  const saveEdit = async () => {
+    if (!editRec || !editForm.cin) { notify("Check-in time is required", "error"); return; }
+    setSaving(true);
+    try {
+      await POST("/api/attendance/admin-mark", {
+        employee_id: editRec.employee_id,
+        date: editRec.date,
+        check_in_time: editForm.cin,
+        check_out_time: editForm.cout || null,
+        notes: editForm.notes,
+        org_id: activeOrgId,
+      });
+      notify("Attendance updated ✓");
+      setEditRec(null);
+      await loadRecords(); // refresh data
+    } catch (err) { notify(err.message, "error"); }
+    finally { setSaving(false); }
+  };
+
+  const clearAtt = async (empId, date) => {
+    if (!window.confirm("Remove attendance for this day?")) return;
+    try {
+      // We mark as absent by removing the record — use a special clear endpoint or set times to null
+      await POST("/api/attendance/admin-mark", {
+        employee_id: empId, date,
+        check_in_time: null, check_out_time: null,
+        notes: "Cleared by admin",
+        org_id: activeOrgId,
+        clear: true,
+      });
+      notify("Attendance cleared");
+      await loadRecords();
+    } catch (err) { notify(err.message, "error"); }
+  };
+
+  const getDaysInMonth = () => {
+    const [y, m] = selMonth.split("-").map(Number);
+    const days = [];
+    for (let d = 1; d <= new Date(y, m, 0).getDate(); d++)
+      days.push(`${y}-${pad(m)}-${pad(d)}`);
+    return days;
+  };
+
+  let filteredEmps = employees.filter(e => e.role === "employee");
+  if (user.role === "branch_admin") filteredEmps = filteredEmps.filter(e => e.branch_id === user.branch_id);
+  if (selBranch !== "all") filteredEmps = filteredEmps.filter(e => e.branch_id === selBranch);
+
+  const daySummary = {
+    present: filteredEmps.filter(e => ["present","late"].includes(getStatus(e.id, selDate).type)).length,
+    absent:  filteredEmps.filter(e => getStatus(e.id, selDate).type === "absent").length,
+    leave:   filteredEmps.filter(e => getStatus(e.id, selDate).type === "leave").length,
+    late:    filteredEmps.filter(e => getStatus(e.id, selDate).type === "late").length,
+  };
+
+  if (loading) return <Spinner />;
+
+  return (
+    <div style={{ padding: 20 }}>
+      <h2 style={{ color: "#166534", fontSize: 22, fontWeight: 800, marginBottom: 16 }}>Attendance Table</h2>
+
+      {/* View toggle */}
+      <div style={{ background: "#dcfce7", borderRadius: 14, display: "flex", padding: 4, marginBottom: 16 }}>
+        {[["day", "📅 Day View"], ["month", "📊 Month View"]].map(([v, l]) => (
+          <button key={v} onClick={() => setView(v)}
+            style={{ flex: 1, background: view === v ? "#fff" : "transparent", border: "none", borderRadius: 10, padding: "8px", cursor: "pointer", color: view === v ? "#15803d" : "#6b7280", fontWeight: 700, fontSize: 13 }}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      {/* Filters */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+        {view === "day"
+          ? <input style={{ background: "#f0faf4", border: "1.5px solid #86efac", borderRadius: 12, color: "#111827", padding: "11px 14px", fontSize: 14, outline: "none", flex: 1 }} type="date" value={selDate} onChange={e => setSelDate(e.target.value)} />
+          : <input style={{ background: "#f0faf4", border: "1.5px solid #86efac", borderRadius: 12, color: "#111827", padding: "11px 14px", fontSize: 14, outline: "none", flex: 1 }} type="month" value={selMonth} onChange={e => setSelMonth(e.target.value)} />
+        }
+        <select style={{ background: "#f0faf4", border: "1.5px solid #86efac", borderRadius: 12, color: "#111827", padding: "11px 14px", fontSize: 13, outline: "none", flex: 1 }} value={selBranch} onChange={e => setSelBranch(e.target.value)}>
+          <option value="all">All branches</option>
+          {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+        </select>
+      </div>
+
+      {/* Legend */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+        {[["P","Present","#dcfce7","#16a34a"],["A","Absent","#fee2e2","#dc2626"],["L","Late","#fef3c7","#d97706"],["CL","Casual","#ede9fe","#7c3aed"],["UL","Unauth","#fee2e2","#dc2626"],["NS","No Show","#ffedd5","#ea580c"]].map(([code,label,bg,color])=>(
+          <span key={code} style={{ display:"flex",alignItems:"center",gap:4,fontSize:12,color:"#6b7280" }}>
+            <span style={{ background:bg,color,fontSize:11,padding:"2px 6px",borderRadius:6,fontWeight:700 }}>{code}</span>{label}
+          </span>
+        ))}
+      </div>
+
+      {/* DAY VIEW */}
+      {view === "day" && (
+        <div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, marginBottom: 16 }}>
+            {[["Present", daySummary.present, "#16a34a"], ["Absent", daySummary.absent, "#dc2626"], ["Leave", daySummary.leave, "#7c3aed"], ["Late", daySummary.late, "#d97706"]].map(([l, v, c]) => (
+              <div key={l} style={{ background: "#fff", borderRadius: 14, padding: "12px 8px", textAlign: "center", boxShadow: "0 2px 8px #86efac33" }}>
+                <p style={{ color: c, fontSize: 22, fontWeight: 900 }}>{v}</p>
+                <p style={{ color: "#6b7280", fontSize: 11 }}>{l}</p>
+              </div>
+            ))}
+          </div>
+
+          {filteredEmps.map(emp => {
+            const st = getStatus(emp.id, selDate);
+            const rec = getRec(emp.id, selDate);
+            const cinTime = rec?.check_in_time ? String(rec.check_in_time).slice(0, 5) : null;
+            const coutTime = rec?.check_out_time ? String(rec.check_out_time).slice(0, 5) : null;
+            return (
+              <div key={emp.id} style={{ background: "#fff", borderRadius: 16, padding: "14px 16px", marginBottom: 10, boxShadow: "0 2px 8px #86efac33", borderLeft: `4px solid ${st.color}` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                  <div style={{ flex: 1 }}>
+                    <p style={{ color: "#111827", fontWeight: 800 }}>{emp.name}</p>
+                    <p style={{ color: "#6b7280", fontSize: 12 }}>{emp.designation} · {emp.branch_name}</p>
+                    {cinTime && (
+                      <p style={{ color: "#6b7280", fontSize: 13, marginTop: 4 }}>
+                        ▶ <strong style={{ color: "#16a34a" }}>{cinTime}</strong>
+                        {coutTime && <> &nbsp; ⏹ <strong style={{ color: "#6366f1" }}>{coutTime}</strong></>}
+                        {rec?.worked_mins != null && <span style={{ color: "#6b7280" }}> &nbsp; ⏱ {Math.floor(rec.worked_mins / 60)}h {rec.worked_mins % 60}m</span>}
+                        {rec?.is_late && <span style={{ color: "#d97706" }}> · {rec.late_mins}m late</span>}
+                      </p>
+                    )}
+                    {rec?.admin_edited && <p style={{ color: "#7c3aed", fontSize: 11, marginTop: 2 }}>✏ Admin edited</p>}
+                    {rec?.notes && <p style={{ color: "#6b7280", fontSize: 11 }}>{rec.notes}</p>}
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
+                    <span style={{ background: st.bg, color: st.color, fontSize: 13, padding: "4px 12px", borderRadius: 20, fontWeight: 700 }}>{st.type === "absent" ? "Absent" : st.type === "present" ? "Present" : st.type === "late" ? `Late ${rec?.late_mins || ""}m` : st.label}</span>
+                    <button onClick={() => openEdit(emp.id, selDate, emp.name)}
+                      style={{ background: "#fff", border: "1.5px solid #22c55e", borderRadius: 10, color: "#15803d", padding: "5px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>✏️ Edit</button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          {filteredEmps.length === 0 && <div style={{ textAlign: "center", padding: "50px 20px" }}><p style={{ fontSize: 42, marginBottom: 12 }}>👥</p><p style={{ color: "#6b7280", fontSize: 15 }}>No employees found</p></div>}
+        </div>
+      )}
+
+      {/* MONTH VIEW */}
+      {view === "month" && (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ borderCollapse: "collapse", minWidth: "100%", fontSize: 12 }}>
+            <thead>
+              <tr>
+                <th style={{ background: "#166534", color: "#fff", padding: "10px 12px", textAlign: "left", position: "sticky", left: 0, zIndex: 2, minWidth: 130 }}>Employee</th>
+                {getDaysInMonth().map(ds => {
+                  const d = new Date(ds + "T12:00:00");
+                  const isSun = d.getDay() === 0;
+                  const isToday_ = ds === today();
+                  return (
+                    <th key={ds} style={{ background: isToday_ ? "#16a34a" : isSun ? "#f3f4f6" : "#166534", color: isToday_ ? "#fff" : isSun ? "#9ca3af" : "#fff", padding: "8px 4px", textAlign: "center", minWidth: 34, fontSize: 10 }}>
+                      <div>{pad(d.getDate())}</div>
+                      <div style={{ opacity: 0.7 }}>{["S","M","T","W","T","F","S"][d.getDay()]}</div>
+                    </th>
+                  );
+                })}
+                <th style={{ background: "#166534", color: "#fff", padding: "10px 8px", textAlign: "center" }}>Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredEmps.map((emp, ei) => {
+                const days = getDaysInMonth();
+                let pCount = 0, aCount = 0, lCount = 0, lateCount = 0;
+                return (
+                  <tr key={emp.id} style={{ background: ei % 2 === 0 ? "#fff" : "#f0faf4" }}>
+                    <td style={{ padding: "8px 12px", fontWeight: 700, color: "#111827", position: "sticky", left: 0, background: ei % 2 === 0 ? "#fff" : "#f0faf4", zIndex: 1, borderRight: "1px solid #dcfce7" }}>
+                      <div>{emp.name}</div>
+                      <div style={{ color: "#6b7280", fontSize: 10, fontWeight: 400 }}>{emp.branch_name}</div>
+                    </td>
+                    {days.map(ds => {
+                      const st = getStatus(emp.id, ds);
+                      const isSun = new Date(ds + "T12:00:00").getDay() === 0;
+                      if (!isSun) {
+                        if (["present","late"].includes(st.type)) { pCount++; if (st.type === "late") lateCount++; }
+                        else if (st.type === "absent") aCount++;
+                        else lCount++;
+                      }
+                      return (
+                        <td key={ds} style={{ padding: "3px 2px", textAlign: "center", background: isSun ? "#f9fafb" : "transparent" }}>
+                          <button onClick={() => !isSun && openEdit(emp.id, ds, emp.name)}
+                            style={{ background: isSun ? "transparent" : st.bg, color: isSun ? "#d1d5db" : st.color, border: "none", borderRadius: 6, padding: "3px 3px", fontSize: 10, fontWeight: 700, cursor: isSun ? "default" : "pointer", minWidth: 26 }}>
+                            {isSun ? "—" : st.label}
+                          </button>
+                        </td>
+                      );
+                    })}
+                    <td style={{ padding: "8px", textAlign: "center", fontSize: 11, whiteSpace: "nowrap" }}>
+                      <div style={{ color: "#16a34a", fontWeight: 700 }}>P:{pCount}</div>
+                      <div style={{ color: "#dc2626", fontWeight: 700 }}>A:{aCount}</div>
+                      <div style={{ color: "#d97706", fontWeight: 700 }}>L:{lateCount}</div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Edit modal */}
+      {editRec && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 300 }}>
+          <div style={{ background: "#fff", borderRadius: "24px 24px 0 0", padding: 24, width: "100%", maxWidth: 480, animation: "slideUp .3s ease" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <div>
+                <p style={{ color: "#166534", fontWeight: 800, fontSize: 17 }}>Edit Attendance</p>
+                <p style={{ color: "#6b7280", fontSize: 13 }}>{editRec.name} · {fmtDF(editRec.date)}</p>
+              </div>
+              <button onClick={() => setEditRec(null)} style={{ background: "#dcfce7", border: "none", borderRadius: 10, width: 36, height: 36, cursor: "pointer", color: "#15803d", fontSize: 16 }}>✕</button>
+            </div>
+
+            <div style={{ background: "#f0faf4", borderRadius: 12, padding: 12, marginBottom: 14, fontSize: 13, color: "#6b7280" }}>
+              Leave check-in and check-out empty to mark as <strong style={{ color: "#dc2626" }}>Absent</strong>. Fill check-in to mark as <strong style={{ color: "#16a34a" }}>Present</strong>.
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <div>
+                <label style={{ color: "#166534", fontSize: 13, fontWeight: 600, marginBottom: 6, display: "block" }}>Check-in time</label>
+                <input style={{ background: "#f0faf4", border: "1.5px solid #86efac", borderRadius: 12, color: "#111827", padding: "12px 14px", fontSize: 14, outline: "none", width: "100%" }}
+                  type="time" value={editForm.cin} onChange={e => setEditForm(f => ({ ...f, cin: e.target.value }))} />
+              </div>
+              <div>
+                <label style={{ color: "#166534", fontSize: 13, fontWeight: 600, marginBottom: 6, display: "block" }}>Check-out time</label>
+                <input style={{ background: "#f0faf4", border: "1.5px solid #86efac", borderRadius: 12, color: "#111827", padding: "12px 14px", fontSize: 14, outline: "none", width: "100%" }}
+                  type="time" value={editForm.cout} onChange={e => setEditForm(f => ({ ...f, cout: e.target.value }))} />
+              </div>
+            </div>
+            {editForm.cin && editForm.cout && toM(editForm.cout) > toM(editForm.cin) && (
+              <p style={{ color: "#16a34a", fontSize: 13, margin: "8px 0" }}>
+                ⏱ Worked: {Math.floor((toM(editForm.cout) - toM(editForm.cin)) / 60)}h {(toM(editForm.cout) - toM(editForm.cin)) % 60}m
+              </p>
+            )}
+            <label style={{ color: "#166534", fontSize: 13, fontWeight: 600, marginBottom: 6, display: "block", marginTop: 10 }}>Reason for edit</label>
+            <input style={{ background: "#f0faf4", border: "1.5px solid #86efac", borderRadius: 12, color: "#111827", padding: "12px 14px", fontSize: 14, outline: "none", width: "100%", marginBottom: 12 }}
+              placeholder="e.g. Employee forgot to scan" value={editForm.notes} onChange={e => setEditForm(f => ({ ...f, notes: e.target.value }))} />
+            <div style={{ display: "flex", gap: 10 }}>
+              <button style={{ background: "linear-gradient(135deg,#15803d,#22c55e)", border: "none", borderRadius: 14, color: "#fff", padding: "14px 20px", fontSize: 15, fontWeight: 800, cursor: "pointer", flex: 1 }}
+                onClick={saveEdit} disabled={saving}>
+                {saving ? "Saving…" : "Save changes"}
+              </button>
+              <button onClick={() => setEditRec(null)}
+                style={{ background: "#fff", border: "1.5px solid #22c55e", borderRadius: 14, color: "#15803d", padding: "14px 20px", fontSize: 14, fontWeight: 700, cursor: "pointer", flex: 1 }}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── LEAVE HISTORY (full audit) ─────────────────────────────────────────────
+function AdminLeaveHistory({ user, notify, activeOrgId }) {
+  const [leaves, setLeaves] = useState([]);
+  const [audit, setAudit] = useState([]);
+  const [employees, setEmployees] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState("current"); // current | audit
+  const [selEmp, setSelEmp] = useState("all");
+  const [selType, setSelType] = useState("all");
+  const [selMonth, setSelMonth] = useState(() => { const n = new Date(); return `${n.getFullYear()}-${pad(n.getMonth() + 1)}`; });
+  const [editLeave, setEditLeave] = useState(null);
+  const [editForm, setEditForm] = useState({ type: "", reason: "", date: "" });
+
+  const TYPE_CONFIG = {
+    casual:       { label: "Casual Leave",       color: "#3b82f6", bg: "#eff6ff" },
+    unauthorized: { label: "Unauthorized Leave", color: "#dc2626", bg: "#fee2e2" },
+    noshow:       { label: "No Show",            color: "#ea580c", bg: "#ffedd5" },
+    sick:         { label: "Sick Leave",         color: "#7c3aed", bg: "#ede9fe" },
+  };
+
+  const ACTION_CONFIG = {
+    created: { label: "Created", color: "#16a34a", bg: "#dcfce7" },
+    edited:  { label: "Edited",  color: "#d97706", bg: "#fef3c7" },
+    deleted: { label: "Deleted", color: "#dc2626", bg: "#fee2e2" },
+  };
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const [y, m] = selMonth.split("-").map(Number);
+      const from = `${y}-${pad(m)}-01`;
+      const to = new Date(y, m, 0).toISOString().split("T")[0];
+      const [lv, emps, al] = await Promise.all([
+        GET("/api/leaves", { from, to, org_id: activeOrgId }),
+        GET("/api/employees", { org_id: activeOrgId }),
+        GET("/api/leaves/audit", { from, to, org_id: activeOrgId }).catch(() => []),
+      ]);
+      setLeaves(lv || []);
+      setEmployees(emps || []);
+      setAudit(al || []);
+    } catch (err) { notify(err.message, "error"); }
+    finally { setLoading(false); }
+  };
+
+  useEffect(() => { if (activeOrgId) load(); }, [activeOrgId, selMonth]);
+
+  const deleteLeave = async (lv) => {
+    if (!window.confirm(`Delete this ${lv.type} leave for ${lv.employee_name} on ${fmtD(lv.date)}?`)) return;
+    try { await DEL(`/api/leaves/${lv.id}`); notify("Leave deleted ✓"); load(); }
+    catch (err) { notify(err.message, "error"); }
+  };
+
+  const saveEdit = async () => {
+    try {
+      await PATCH(`/api/leaves/${editLeave.id}`, editForm);
+      notify("Leave updated ✓"); setEditLeave(null); load();
+    } catch (err) { notify(err.message, "error"); }
+  };
+
+  let list = leaves;
+  if (selEmp !== "all") list = list.filter(l => l.employee_id === selEmp);
+  if (selType !== "all") list = list.filter(l => l.type === selType);
+  list = [...list].sort((a, b) => b.date.localeCompare(a.date));
+
+  const counts = leaves.reduce((acc, l) => { acc[l.type] = (acc[l.type] || 0) + 1; return acc; }, {});
+
+  if (loading) return <Spinner />;
+
+  return (
+    <div style={{ padding: 20 }}>
+      <h2 style={{ color: "#166534", fontSize: 22, fontWeight: 800, marginBottom: 16 }}>Leave & Penalty History</h2>
+
+      <input style={{ background: "#f0faf4", border: "1.5px solid #86efac", borderRadius: 12, color: "#111827", padding: "11px 14px", fontSize: 14, outline: "none", width: "100%", marginBottom: 12 }} type="month" value={selMonth} onChange={e => setSelMonth(e.target.value)} />
+
+      {/* Summary */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+        {Object.entries(counts).map(([type, count]) => {
+          const tc = TYPE_CONFIG[type] || { label: type, color: "#6b7280", bg: "#f3f4f6" };
+          return <span key={type} style={{ background: tc.bg, color: tc.color, fontSize: 12, padding: "4px 12px", borderRadius: 20, fontWeight: 700 }}>{tc.label}: {count}</span>;
+        })}
+      </div>
+
+      {/* Tabs */}
+      <div style={{ background: "#dcfce7", borderRadius: 14, display: "flex", padding: 4, marginBottom: 16 }}>
+        {[["current", `📋 Current Leaves (${list.length})`], ["audit", `🕐 Audit Log (${audit.length})`]].map(([t, l]) => (
+          <button key={t} onClick={() => setTab(t)}
+            style={{ flex: 1, background: tab === t ? "#fff" : "transparent", border: "none", borderRadius: 10, padding: "8px", cursor: "pointer", color: tab === t ? "#15803d" : "#6b7280", fontWeight: 700, fontSize: 13 }}>{l}</button>
+        ))}
+      </div>
+
+      {tab === "current" && (
+        <div>
+          {/* Filters */}
+          <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+            <select style={{ background: "#f0faf4", border: "1.5px solid #86efac", borderRadius: 12, color: "#111827", padding: "10px 12px", fontSize: 12, outline: "none", flex: 1 }} value={selEmp} onChange={e => setSelEmp(e.target.value)}>
+              <option value="all">All employees</option>
+              {employees.filter(e => e.role === "employee").map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+            </select>
+            <select style={{ background: "#f0faf4", border: "1.5px solid #86efac", borderRadius: 12, color: "#111827", padding: "10px 12px", fontSize: 12, outline: "none", flex: 1 }} value={selType} onChange={e => setSelType(e.target.value)}>
+              <option value="all">All types</option>
+              {Object.entries(TYPE_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+            </select>
+          </div>
+
+          {list.map(lv => {
+            const tc = TYPE_CONFIG[lv.type] || { label: lv.type, color: "#6b7280", bg: "#f3f4f6" };
+            return (
+              <div key={lv.id} style={{ background: "#fff", borderRadius: 16, padding: "14px 16px", marginBottom: 10, boxShadow: "0 2px 8px #86efac33", borderLeft: `4px solid ${tc.color}` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                      <p style={{ color: "#111827", fontWeight: 800 }}>{lv.employee_name}</p>
+                      <span style={{ background: tc.bg, color: tc.color, fontSize: 11, padding: "2px 8px", borderRadius: 20, fontWeight: 700 }}>{tc.label}</span>
+                    </div>
+                    <p style={{ color: "#15803d", fontWeight: 700, fontSize: 14 }}>📅 {fmtD(lv.date)}</p>
+                    {lv.reason && <p style={{ color: "#6b7280", fontSize: 13, marginTop: 3 }}>💬 {lv.reason}</p>}
+                    {lv.recorded_by_name && <p style={{ color: "#9ca3af", fontSize: 11, marginTop: 4 }}>Recorded by {lv.recorded_by_name}</p>}
+                    {lv.created_at && <p style={{ color: "#9ca3af", fontSize: 11 }}>{new Date(lv.created_at).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</p>}
+                  </div>
+                  <div style={{ display: "flex", gap: 6, marginLeft: 8 }}>
+                    <button onClick={() => { setEditLeave(lv); setEditForm({ type: lv.type, reason: lv.reason || "", date: lv.date }); }}
+                      style={{ background: "#fff", border: "1.5px solid #22c55e", borderRadius: 10, color: "#15803d", padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>✏️</button>
+                    <button onClick={() => deleteLeave(lv)}
+                      style={{ background: "#fff", border: "1.5px solid #ef4444", borderRadius: 10, color: "#ef4444", padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>🗑</button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          {list.length === 0 && <div style={{ textAlign: "center", padding: "50px 20px" }}><p style={{ fontSize: 42, marginBottom: 12 }}>📝</p><p style={{ color: "#6b7280" }}>No leave records this month</p></div>}
+        </div>
+      )}
+
+      {tab === "audit" && (
+        <div>
+          {audit.length === 0 && <div style={{ textAlign: "center", padding: "50px 20px" }}><p style={{ fontSize: 42, marginBottom: 12 }}>🕐</p><p style={{ color: "#6b7280" }}>No audit events this month</p></div>}
+          {audit.map(a => {
+            const ac = ACTION_CONFIG[a.action] || { label: a.action, color: "#6b7280", bg: "#f3f4f6" };
+            const oldD = a.old_data ? (typeof a.old_data === "string" ? JSON.parse(a.old_data) : a.old_data) : null;
+            const newD = a.new_data ? (typeof a.new_data === "string" ? JSON.parse(a.new_data) : a.new_data) : null;
+            const tc = TYPE_CONFIG[newD?.type || oldD?.type] || { label: newD?.type || oldD?.type, color: "#6b7280" };
+            return (
+              <div key={a.id} style={{ background: "#fff", borderRadius: 16, padding: "14px 16px", marginBottom: 10, boxShadow: "0 2px 8px #86efac33", borderLeft: `4px solid ${ac.color}` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+                  <div>
+                    <p style={{ color: "#111827", fontWeight: 800 }}>{a.employee_name}</p>
+                    <p style={{ color: "#9ca3af", fontSize: 12 }}>
+                      {a.changed_by_name && `by ${a.changed_by_name} · `}
+                      {new Date(a.created_at).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                    </p>
+                  </div>
+                  <span style={{ background: ac.bg, color: ac.color, fontSize: 12, padding: "3px 10px", borderRadius: 20, fontWeight: 700 }}>{ac.label}</span>
+                </div>
+                {/* Show before → after */}
+                {oldD && newD && a.action === "edited" && (
+                  <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                    <div style={{ flex: 1, background: "#fee2e2", borderRadius: 10, padding: "8px 10px" }}>
+                      <p style={{ color: "#9ca3af", fontSize: 10, marginBottom: 2 }}>BEFORE</p>
+                      <p style={{ color: "#dc2626", fontSize: 13, fontWeight: 700 }}>{TYPE_CONFIG[oldD.type]?.label || oldD.type}</p>
+                      <p style={{ color: "#9ca3af", fontSize: 12 }}>{fmtD(oldD.date)} {oldD.reason && `· ${oldD.reason}`}</p>
+                    </div>
+                    <span style={{ alignSelf: "center", fontSize: 18 }}>→</span>
+                    <div style={{ flex: 1, background: "#dcfce7", borderRadius: 10, padding: "8px 10px" }}>
+                      <p style={{ color: "#9ca3af", fontSize: 10, marginBottom: 2 }}>AFTER</p>
+                      <p style={{ color: "#16a34a", fontSize: 13, fontWeight: 700 }}>{TYPE_CONFIG[newD.type]?.label || newD.type}</p>
+                      <p style={{ color: "#9ca3af", fontSize: 12 }}>{fmtD(newD.date)} {newD.reason && `· ${newD.reason}`}</p>
+                    </div>
+                  </div>
+                )}
+                {a.action === "created" && newD && (
+                  <p style={{ color: "#6b7280", fontSize: 13 }}>{TYPE_CONFIG[newD.type]?.label} on {fmtD(newD.date)}{newD.reason && ` · ${newD.reason}`}</p>
+                )}
+                {a.action === "deleted" && oldD && (
+                  <p style={{ color: "#6b7280", fontSize: 13, textDecoration: "line-through" }}>{TYPE_CONFIG[oldD.type]?.label} on {fmtD(oldD.date)}{oldD.reason && ` · ${oldD.reason}`}</p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Edit modal */}
+      {editLeave && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 300 }}>
+          <div style={{ background: "#fff", borderRadius: "24px 24px 0 0", padding: 24, width: "100%", maxWidth: 480, animation: "slideUp .3s ease" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
+              <div>
+                <p style={{ color: "#166534", fontWeight: 800, fontSize: 17 }}>Edit Leave</p>
+                <p style={{ color: "#6b7280", fontSize: 13 }}>{editLeave.employee_name}</p>
+              </div>
+              <button onClick={() => setEditLeave(null)} style={{ background: "#dcfce7", border: "none", borderRadius: 10, width: 36, height: 36, cursor: "pointer", color: "#15803d", fontSize: 16 }}>✕</button>
+            </div>
+            <label style={{ color: "#166534", fontSize: 13, fontWeight: 600, marginBottom: 6, display: "block" }}>Leave type</label>
+            <select style={{ background: "#f0faf4", border: "1.5px solid #86efac", borderRadius: 12, color: "#111827", padding: "12px 14px", fontSize: 14, outline: "none", width: "100%", marginBottom: 10 }} value={editForm.type} onChange={e => setEditForm(f => ({ ...f, type: e.target.value }))}>
+              {Object.entries(TYPE_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+            </select>
+            <label style={{ color: "#166534", fontSize: 13, fontWeight: 600, marginBottom: 6, display: "block" }}>Date</label>
+            <input style={{ background: "#f0faf4", border: "1.5px solid #86efac", borderRadius: 12, color: "#111827", padding: "12px 14px", fontSize: 14, outline: "none", width: "100%", marginBottom: 10 }} type="date" value={editForm.date} onChange={e => setEditForm(f => ({ ...f, date: e.target.value }))} />
+            <label style={{ color: "#166534", fontSize: 13, fontWeight: 600, marginBottom: 6, display: "block" }}>Reason</label>
+            <input style={{ background: "#f0faf4", border: "1.5px solid #86efac", borderRadius: 12, color: "#111827", padding: "12px 14px", fontSize: 14, outline: "none", width: "100%", marginBottom: 12 }} placeholder="Reason" value={editForm.reason} onChange={e => setEditForm(f => ({ ...f, reason: e.target.value }))} />
+            <div style={{ display: "flex", gap: 10 }}>
+              <button style={{ background: "linear-gradient(135deg,#15803d,#22c55e)", border: "none", borderRadius: 14, color: "#fff", padding: "14px 20px", fontSize: 15, fontWeight: 800, cursor: "pointer", flex: 1 }} onClick={saveEdit}>Save changes</button>
+              <button onClick={() => setEditLeave(null)} style={{ background: "#fff", border: "1.5px solid #22c55e", borderRadius: 14, color: "#15803d", padding: "14px 20px", fontSize: 14, fontWeight: 700, cursor: "pointer", flex: 1 }}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── DAILY BOARD ────────────────────────────────────────────────────────────
 function AdminDailyBoard({ notify, activeOrgId }) {
   const [date, setDate] = useState(today());
   const [records, setRecords] = useState([]);
@@ -1869,7 +2426,7 @@ function AdminDailyBoard({ notify, activeOrgId }) {
   const [branches, setBranches] = useState([]);
   const [selBranch, setSelBranch] = useState("all");
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState("present"); // present | absent | leave | late
+  const [tab, setTab] = useState("present");
 
   const load = async () => {
     setLoading(true);
@@ -1897,82 +2454,85 @@ function AdminDailyBoard({ notify, activeOrgId }) {
     const rec = records.find(r => r.employee_id === emp.id && r.check_in_time);
     const leave = leaves.find(l => l.employee_id === emp.id);
     if (leave) return { status: "leave", type: leave.type, reason: leave.reason };
-    if (rec) return { status: "present", rec, isLate: rec.is_late, lateMins: rec.late_mins };
+    if (rec) return {
+      status: rec.is_late ? "late" : "present", rec,
+      cin: String(rec.check_in_time || "").slice(0, 5),
+      cout: String(rec.check_out_time || "").slice(0, 5),
+      lateMins: rec.late_mins, workedMins: rec.worked_mins,
+    };
     return { status: "absent" };
   };
 
-  const present = emps.filter(e => getEmpStatus(e).status === "present");
-  const absent = emps.filter(e => getEmpStatus(e).status === "absent");
+  const present = emps.filter(e => ["present","late"].includes(getEmpStatus(e).status));
+  const absent  = emps.filter(e => getEmpStatus(e).status === "absent");
   const onLeave = emps.filter(e => getEmpStatus(e).status === "leave");
-  const late = present.filter(e => getEmpStatus(e).isLate);
+  const late    = emps.filter(e => getEmpStatus(e).status === "late");
 
-  const tabs = [
-    ["present", `✅ Present (${present.length})`],
-    ["late",    `⚠ Late (${late.length})`],
-    ["absent",  `❌ Absent (${absent.length})`],
-    ["leave",   `🌿 Leave (${onLeave.length})`],
-  ];
+  const currentList = { present, late, absent, leave: onLeave }[tab] || [];
 
-  const currentList = { present, absent, leave: onLeave, late }[tab] || [];
+  const statusColor = { present: "#16a34a", late: "#d97706", absent: "#dc2626", leave: "#7c3aed" };
 
   if (loading) return <Spinner />;
 
   return (
     <div style={{ padding: 20 }}>
-      <h2 style={{ color: C.g800, fontSize: 22, fontWeight: 800, marginBottom: 16 }}>Daily Board</h2>
+      <h2 style={{ color: "#166534", fontSize: 22, fontWeight: 800, marginBottom: 16 }}>Daily Board</h2>
 
-      {/* Date + branch filters */}
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-        <input style={{ ...S.input, marginBottom: 0, flex: 1 }} type="date" value={date} onChange={e => setDate(e.target.value)} />
-        <select style={{ ...S.select, marginBottom: 0, flex: 1 }} value={selBranch} onChange={e => setSelBranch(e.target.value)}>
+        <input style={{ background: "#f0faf4", border: "1.5px solid #86efac", borderRadius: 12, color: "#111827", padding: "11px 14px", fontSize: 14, outline: "none", flex: 1 }} type="date" value={date} onChange={e => setDate(e.target.value)} />
+        <select style={{ background: "#f0faf4", border: "1.5px solid #86efac", borderRadius: 12, color: "#111827", padding: "11px 12px", fontSize: 13, outline: "none", flex: 1 }} value={selBranch} onChange={e => setSelBranch(e.target.value)}>
           <option value="all">All branches</option>
           {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
         </select>
       </div>
 
-      {/* Summary cards */}
+      {/* Summary */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, marginBottom: 16 }}>
-        {[["Present", present.length, C.g600], ["Late", late.length, C.amber], ["Absent", absent.length, C.red], ["Leave", onLeave.length, C.violet]].map(([l, v, c]) => (
-          <div key={l} style={{ background: C.white, borderRadius: 14, padding: "12px 8px", textAlign: "center", boxShadow: `0 2px 8px ${C.g300}33`, cursor: "pointer" }}
-            onClick={() => setTab(l.toLowerCase())}>
+        {[["Present", present.length, "#16a34a"], ["Late", late.length, "#d97706"], ["Absent", absent.length, "#dc2626"], ["Leave", onLeave.length, "#7c3aed"]].map(([l, v, c]) => (
+          <div key={l} onClick={() => setTab(l.toLowerCase())} style={{ background: "#fff", borderRadius: 14, padding: "12px 8px", textAlign: "center", boxShadow: "0 2px 8px #86efac33", cursor: "pointer", outline: tab === l.toLowerCase() ? `2px solid ${c}` : "none" }}>
             <p style={{ color: c, fontSize: 22, fontWeight: 900 }}>{v}</p>
-            <p style={{ color: C.gr500, fontSize: 11 }}>{l}</p>
+            <p style={{ color: "#6b7280", fontSize: 11 }}>{l}</p>
           </div>
         ))}
       </div>
 
-      {/* Tab bar */}
+      {/* Tabs */}
       <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto" }}>
-        {tabs.map(([k, l]) => (
-          <button key={k} onClick={() => setTab(k)} style={{ background: tab === k ? C.g600 : C.g100, border: "none", borderRadius: 20, padding: "7px 14px", cursor: "pointer", color: tab === k ? C.white : C.gr500, fontWeight: 700, fontSize: 12, whiteSpace: "nowrap" }}>{l}</button>
+        {[["present", `✅ Present (${present.length})`], ["late", `⚠ Late (${late.length})`], ["absent", `❌ Absent (${absent.length})`], ["leave", `🌿 Leave (${onLeave.length})`]].map(([k, l]) => (
+          <button key={k} onClick={() => setTab(k)}
+            style={{ background: tab === k ? "#16a34a" : "#dcfce7", border: "none", borderRadius: 20, padding: "7px 14px", cursor: "pointer", color: tab === k ? "#fff" : "#6b7280", fontWeight: 700, fontSize: 12, whiteSpace: "nowrap" }}>{l}</button>
         ))}
       </div>
 
-      {/* Employee list */}
+      <button onClick={load} style={{ background: "#f0faf4", border: "1.5px solid #86efac", borderRadius: 12, color: "#15803d", padding: "8px 16px", fontSize: 13, fontWeight: 700, cursor: "pointer", marginBottom: 14 }}>🔄 Refresh</button>
+
       {currentList.map(emp => {
         const es = getEmpStatus(emp);
-        const statusColors = { present: C.g600, absent: C.red, leave: C.violet, late: C.amber };
+        const sc = statusColor[es.status] || "#6b7280";
         return (
-          <div key={emp.id} style={{ background: C.white, borderRadius: 16, padding: "14px 16px", marginBottom: 10, boxShadow: `0 2px 8px ${C.g300}33`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div>
-              <p style={{ color: C.gr900, fontWeight: 800 }}>{emp.name}</p>
-              <p style={{ color: C.gr500, fontSize: 12 }}>{emp.designation} · {emp.branch_name}</p>
-              {es.status === "present" && (
-                <p style={{ color: C.gr500, fontSize: 13, marginTop: 3 }}>
-                  ▶ {es.rec?.check_in_time?.slice(0, 5)}
-                  {es.rec?.check_out_time && ` ⏹ ${es.rec.check_out_time.slice(0, 5)}`}
-                  {es.isLate && <span style={{ color: C.amber }}> · {es.lateMins}m late</span>}
-                </p>
-              )}
-              {es.status === "leave" && <p style={{ color: C.violet, fontSize: 12, marginTop: 3 }}>{es.type} {es.reason ? `· ${es.reason}` : ""}</p>}
+          <div key={emp.id} style={{ background: "#fff", borderRadius: 16, padding: "14px 16px", marginBottom: 10, boxShadow: "0 2px 8px #86efac33", borderLeft: `4px solid ${sc}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+              <div style={{ flex: 1 }}>
+                <p style={{ color: "#111827", fontWeight: 800 }}>{emp.name}</p>
+                <p style={{ color: "#6b7280", fontSize: 12 }}>{emp.designation} · {emp.branch_name}</p>
+                {(es.status === "present" || es.status === "late") && (
+                  <p style={{ color: "#6b7280", fontSize: 13, marginTop: 4 }}>
+                    ▶ <strong style={{ color: "#16a34a" }}>{es.cin}</strong>
+                    {es.cout && <> ⏹ <strong style={{ color: "#6366f1" }}>{es.cout}</strong></>}
+                    {es.workedMins != null && <span> · ⏱ {Math.floor(es.workedMins / 60)}h {es.workedMins % 60}m</span>}
+                    {es.status === "late" && <span style={{ color: "#d97706" }}> · {es.lateMins}m late</span>}
+                  </p>
+                )}
+                {es.status === "leave" && <p style={{ color: "#7c3aed", fontSize: 12, marginTop: 3 }}>{es.type}{es.reason ? ` · ${es.reason}` : ""}</p>}
+              </div>
+              <span style={{ background: `${sc}18`, color: sc, fontSize: 12, padding: "4px 12px", borderRadius: 20, fontWeight: 700 }}>
+                {es.status === "present" ? "Present" : es.status === "late" ? `Late ${es.lateMins}m` : es.status === "absent" ? "Absent" : es.type || "Leave"}
+              </span>
             </div>
-            <span style={{ background: `${statusColors[es.status]}18`, color: statusColors[es.status], fontSize: 12, padding: "4px 12px", borderRadius: 20, fontWeight: 700 }}>
-              {es.status === "present" ? (es.isLate ? "Late" : "Present") : es.status === "absent" ? "Absent" : es.type || "Leave"}
-            </span>
           </div>
         );
       })}
-      {currentList.length === 0 && <Empty icon="✅" msg={`No employees in ${tab} category`} />}
+      {currentList.length === 0 && <div style={{ textAlign: "center", padding: "50px 20px" }}><p style={{ fontSize: 42, marginBottom: 12 }}>✅</p><p style={{ color: "#6b7280" }}>No employees in {tab} category</p></div>}
     </div>
   );
 }

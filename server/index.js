@@ -620,6 +620,10 @@ app.post('/api/attendance/checkout', auth(['employee']), async (req, res) => {
 // Admin mark / edit attendance for any date
 app.post('/api/attendance/admin-mark', auth(['super_admin', 'org_admin', 'branch_admin']), async (req, res) => {
   try {
+    if (req.body.clear === true) {
+  await db('DELETE FROM attendance_records WHERE employee_id=$1 AND date=$2', [employee_id, date]);
+  return res.json({ ok: true, cleared: true });
+}
     const oid = orgId(req);
     const { employee_id, date, check_in_time, check_out_time, notes } = req.body;
 
