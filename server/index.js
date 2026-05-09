@@ -226,48 +226,6 @@ app.patch('/api/branches/:id', auth(['super_admin','org_admin','branch_admin']),
   res.json({ ok: true });
 });
 
-// ============================================================
-// EMPLOYEES
-// ============================================================
-
-app.get('/api/employees', auth(['super_admin','org_admin','branch_admin']), async (req, res) => {
-  const oid = orgId(req);
-  const { rows } = await db(`
-    SELECT u.id,u.org_id,u.branch_id,u.name,u.phone,u.role,u.designation,
-           u.salary,u.default_shift_id,u.is_active,u.created_at,
-           b.name AS branch_name, st.name AS default_shift_name
-    FROM users u
-    LEFT JOIN branches b ON b.id = u.branch_id
-    LEFT JOIN shift_templates st ON st.id = u.default_shift_id
-    WHERE u.org_id = $1 AND u.role NOT IN ('super_admin','org_admin') AND u.is_active = true
-    ORDER BY u.name
-  `, [oid]);
-  res.json(rows);
-});
-
-app.post('/api/employees', auth(['super_admin','org_admin','branch_admin']), async (req, res) => {
-  const oid = orgId(req);
-  const { name, phone, password, branch_id, role, designation, salary, default_shift_id } = req.body;
-  const hash = await bcrypt.hash(password || '1234', 10);
-  const { rows } = await db(
-    `INSERT INTO users (org_id,branch_id,name,phone,password_hash,role,designation,salary,default_shift_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id,name,phone,role,designation,salary`,
-    [oid, branch_id, name, phone, hash, role || 'employee', designation, salary || 0, default_shift_id || null]);
-  res.json(rows[0]);
-});
-
-app.patch('/api/employees/:id', auth(['super_admin','org_admin','branch_admin']), async (req, res) => {
-  const { name, branch_id, designation, salary, default_shift_id, is_active } = req.body;
-  await db('UPDATE users SET name=$1,branch_id=$2,designation=$3,salary=$4,default_shift_id=$5,is_active=$6,updated_at=now() WHERE id=$7',
-    [name, branch_id, designation, salary, default_shift_id, is_active ?? true, req.params.id]);
-  res.json({ ok: true });
-});
-
-app.post('/api/employees/:id/reset-password', auth(['super_admin','org_admin','branch_admin']), async (req, res) => {
-  const hash = await bcrypt.hash(req.body.password, 10);
-  await db('UPDATE users SET password_hash=$1 WHERE id=$2', [hash, req.params.id]);
-  res.json({ ok: true });
-});
 
 // ============================================================
 // SHIFTS
@@ -664,6 +622,99 @@ app.post('/api/cron/auto-checkout', async (req, res) => {
   }
 });
 
+// ── EMPLOYEES ─────────────────────────────────────────────────────────────
+app.get('/api/employees', auth(['super_admin','org_admin','branch_admin']), async (req, res) => {
+  try {
+    const oid = orgId(req);
+    const { rows } = await db(`
+      SELECT u.id, u.org_id, u.branch_id, u.name, u.phone, u.role,
+             u.designation, u.salary, u.default_shift_id, u.is_active,
+             u.status, u.manager_id, u.date_of_joining, u.employee_code,
+             u.relieving_date, u.relieving_reason, u.created_at,
+             b.name AS branch_name, st.name AS default_shift_name,
+             m.name AS manager_name
+      FROM users u
+      LEFT JOIN branches b ON b.id = u.branch_id
+      LEFT JOIN shift_templates st ON st.id = u.default_shift_id
+      LEFT JOIN users m ON m.id = u.manager_id
+      WHERE u.org_id = $1
+        AND u.role NOT IN ('super_admin')
+        AND u.is_active = true
+      ORDER BY u.name
+    `, [oid]);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/employees', auth(['super_admin','org_admin','branch_admin']), async (req, res) => {
+  try {
+    const oid = orgId(req);
+    const { name, phone, password, branch_id, role, designation, salary,
+            default_shift_id, manager_id, date_of_joining, employee_code } = req.body;
+    const hash = await bcrypt.hash(password || '1234', 10);
+    const { rows } = await db(
+      `INSERT INTO users
+        (org_id, branch_id, name, phone, password_hash, role, designation,
+         salary, default_shift_id, manager_id, date_of_joining, employee_code, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'active')
+       RETURNING id, name, phone, role, designation, salary`,
+      [oid, branch_id, name, phone, hash, role || 'employee', designation,
+       salary || 0, default_shift_id || null, manager_id || null,
+       date_of_joining || null, employee_code || null]
+    );
+    res.json(rows[0]);
+  } catch (e) {
+    if (e.message.includes('unique')) res.status(400).json({ error: 'Phone number already exists' });
+    else res.status(500).json({ error: e.message });
+  }
+});
+
+app.patch('/api/employees/:id', auth(['super_admin','org_admin','branch_admin']), async (req, res) => {
+  try {
+    const { name, branch_id, designation, salary, default_shift_id, is_active,
+            status, relieving_date, relieving_reason, manager_id,
+            date_of_joining, employee_code } = req.body;
+    await db(
+      `UPDATE users SET name=$1, branch_id=$2, designation=$3, salary=$4,
+        default_shift_id=$5, is_active=$6, status=$7, relieving_date=$8,
+        relieving_reason=$9, manager_id=$10, date_of_joining=$11,
+        employee_code=$12, updated_at=now() WHERE id=$13`,
+      [name, branch_id, designation, salary, default_shift_id,
+       is_active ?? true, status ?? 'active', relieving_date || null,
+       relieving_reason || null, manager_id || null,
+       date_of_joining || null, employee_code || null, req.params.id]
+    );
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── STATUS HISTORY ─────────────────────────────────────────────────────────
+app.get('/api/status-history', auth(), async (req, res) => {
+  try {
+    const { employee_id } = req.query;
+    const { rows } = await db(
+      `SELECT sh.*, u.name as changed_by_name
+       FROM status_history sh
+       LEFT JOIN users u ON u.id = sh.changed_by
+       WHERE sh.employee_id = $1
+       ORDER BY sh.created_at DESC LIMIT 50`,
+      [employee_id || req.user.id]
+    );
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/status-history', auth(['super_admin','org_admin','branch_admin']), async (req, res) => {
+  try {
+    const { employee_id, org_id, old_status, new_status, reason, effective_date } = req.body;
+    const { rows } = await db(
+      `INSERT INTO status_history (employee_id, org_id, old_status, new_status, reason, effective_date, changed_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [employee_id, org_id, old_status, new_status, reason, effective_date, req.user.id]
+    );
+    res.json(rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 // ============================================================
 // CATCH-ALL: Serve React app for all non-API routes
 // This is what makes it a full-stack Railway deployment
