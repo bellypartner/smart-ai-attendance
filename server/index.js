@@ -845,7 +845,21 @@ app.get('/api/salary-report', auth(['super_admin', 'org_admin', 'branch_admin'])
 // ============================================================
 // AUTO-CHECKOUT CRON
 // ============================================================
+app.get('/api/orgs/:id/default-shift', auth(), async (req, res) => {
+  try {
+    const oid = req.params.id === 'me' ? orgId(req) : req.params.id;
+    const { rows } = await db('SELECT default_shift_id FROM org_settings WHERE org_id=$1', [oid]);
+    res.json({ default_shift_id: rows[0]?.default_shift_id || null });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
 
+app.patch('/api/orgs/:id/default-shift', auth(['super_admin','org_admin','branch_admin']), async (req, res) => {
+  try {
+    const oid = req.params.id === 'me' ? orgId(req) : req.params.id;
+    await db('UPDATE org_settings SET default_shift_id=$1 WHERE org_id=$2', [req.body.default_shift_id, oid]);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
 app.post('/api/cron/auto-checkout', async (req, res) => {
   if (req.headers['x-cron-secret'] !== process.env.CRON_SECRET)
     return res.status(401).end();

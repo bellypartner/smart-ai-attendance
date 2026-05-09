@@ -103,39 +103,56 @@ function QRCanvas({data:qd, size=200}) {
 
 // ── QR SCANNER ─────────────────────────────────────────────────────────────
 function QRScanner({onScan, onClose, branches}) {
-  const vRef=useRef(null);
-  const [err,setErr]=useState(null), [streaming,setStreaming]=useState(false), [man,setMan]=useState("");
-  useEffect(()=>{
+  const vRef = useRef(null);
+  const [err, setErr] = useState(null);
+  const [streaming, setStreaming] = useState(false);
+  const [selBranch, setSelBranch] = useState(branches[0]?.id || "");
+
+  useEffect(() => {
     let st;
     navigator.mediaDevices?.getUserMedia({video:{facingMode:"environment"}})
       .then(s=>{st=s;if(vRef.current)vRef.current.srcObject=s;setStreaming(true);})
       .catch(()=>setErr("Camera unavailable"));
     return ()=>st?.getTracks().forEach(t=>t.stop());
   },[]);
+
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.72)",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:999}}>
       <div style={{background:C.white,borderRadius:"28px 28px 0 0",padding:24,width:"100%",maxWidth:480,animation:"slideUp .3s ease"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-          <h3 style={{fontSize:18,fontWeight:800,color:C.g800}}>Scan Branch QR</h3>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+          <div>
+            <h3 style={{fontSize:18,fontWeight:800,color:C.g800}}>Mark Attendance</h3>
+            <p style={{color:C.gr500,fontSize:12}}>Scan QR or select your branch below</p>
+          </div>
           <button onClick={onClose} style={S.iconBtn}>✕</button>
         </div>
-        <div style={{background:"#000",borderRadius:18,height:160,position:"relative",overflow:"hidden",marginBottom:16}}>
+        <div style={{background:"#000",borderRadius:18,height:150,position:"relative",overflow:"hidden",marginBottom:14}}>
           <video ref={vRef} autoPlay playsInline muted style={{width:"100%",height:"100%",objectFit:"cover"}}/>
           <div style={{position:"absolute",inset:14,border:`2px solid ${C.g500}`,borderRadius:10}}/>
           {streaming&&<div style={{position:"absolute",left:14,right:14,height:2,background:`linear-gradient(90deg,transparent,${C.g500},transparent)`,top:"40%",animation:"scanline 2s ease-in-out infinite"}}/>}
         </div>
         {err&&<p style={{color:C.amber,fontSize:13,textAlign:"center",marginBottom:10}}>⚠ {err}</p>}
-        <input style={S.input} placeholder="Paste QR data…" value={man} onChange={e=>setMan(e.target.value)}/>
-        <button style={S.btn} onClick={()=>{try{const d=JSON.parse(man);if(d.branchId)onScan(d);else setErr("Invalid QR");}catch{setErr("Bad format");}}}>Submit manual</button>
-        <p style={{color:C.g600,fontSize:12,fontWeight:700,margin:"14px 0 8px"}}>⚡ Quick scan</p>
-        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-          {branches.map(b=><button key={b.id} style={S.outline} onClick={()=>onScan({branchId:b.id,token:"SMARTAI_V4",app:"3SL"})}>📍 {b.name}</button>)}
-        </div>
+        <p style={{color:C.g700,fontSize:13,fontWeight:700,marginBottom:8}}>Select your branch:</p>
+        <select
+          style={{...S.select,marginBottom:10}}
+          value={selBranch}
+          onChange={e=>setSelBranch(e.target.value)}
+        >
+          <option value="">— Select branch —</option>
+          {branches.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}
+        </select>
+        <button
+          onClick={()=>{if(!selBranch){setErr("Select a branch first");return;}onScan({branchId:selBranch,token:"SMARTAI_V4",app:"3SL"});}}
+          disabled={!selBranch}
+          style={{...S.btn,opacity:selBranch?1:0.5}}
+        >
+          📍 Mark at {branches.find(b=>b.id===selBranch)?.name||"Branch"}
+        </button>
+        <p style={{color:C.gr500,fontSize:11,textAlign:"center",marginTop:8}}>Your location will be verified automatically</p>
       </div>
     </div>
   );
 }
-
 // ── LOADING & ERROR ────────────────────────────────────────────────────────
 function Spinner() {
   return <div style={{display:"flex",justifyContent:"center",padding:60}}><div style={{width:32,height:32,border:`3px solid ${C.g100}`,borderTopColor:C.g600,borderRadius:"50%",animation:"spin .7s linear infinite"}}/></div>;
@@ -246,21 +263,37 @@ function EmpApp({user, notify, page, setPage, onLogout}) {
   useEffect(()=>{ load(); },[load]);
 
   const handleScan = (qd) => {
-    setShowScanner(false);
-    const scBr = branches.find(b=>b.id===qd.branchId);
-    if(!scBr) { notify("Invalid QR","error"); return; }
-    if(todayAtt?.cin && todayAtt?.cout) { notify("Already done for today","error"); return; }
-    navigator.geolocation?.getCurrentPosition(
-      pos => {
-        const dist = geoDist(pos.coords.latitude,pos.coords.longitude,scBr.lat,scBr.lng);
-        if(dist > scBr.radius) { notify(`Outside geo-fence! ${Math.round(dist)}m away (max ${scBr.radius}m)`,"error"); return; }
+  setShowScanner(false);
+  const scBr = branches.find(b => b.id === qd.branchId);
+  if(!scBr) { notify("Branch not found", "error"); return; }
+  if(todayAtt?.cin && todayAtt?.cout) { notify("Already done for today", "error"); return; }
+
+  notify("📍 Checking your location…", "info");
+
+  if(navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const dist = geoDist(pos.coords.latitude, pos.coords.longitude, scBr.lat, scBr.lng);
+        if(dist > (scBr.radius || 200)) {
+          notify(`❌ You are ${Math.round(dist)}m away. Must be within ${scBr.radius || 200}m of ${scBr.name}`, "error");
+          return;
+        }
         processAtt(qd.branchId, pos.coords);
       },
-      () => processAtt(qd.branchId, null),
-      {timeout:7000,enableHighAccuracy:true}
+      (geoErr) => {
+        const msg = geoErr.code === 1
+          ? "⚠ Location permission denied — marking without geo verification"
+          : "⚠ GPS unavailable — marking without geo verification";
+        notify(msg, "warn");
+        processAtt(qd.branchId, null);
+      },
+      { timeout: 10000, enableHighAccuracy: true, maximumAge: 0 }
     );
-  };
-
+  } else {
+    notify("⚠ GPS not supported — marking anyway", "warn");
+    processAtt(qd.branchId, null);
+  }
+};
   const processAtt = async (branchId, coords) => {
     try {
       if(!todayAtt?.cin) {
@@ -1244,6 +1277,7 @@ function AdminSettings({user, notify, activeOrgId}) {
   const saveSettings=async()=>{
     try{await PATCH(`/api/orgs/${activeOrgId}/settings`,settings);notify("Settings saved ✓");}
     catch(e){notify(e.message,"error");}
+    <OrgDefaultShift notify={notify} activeOrgId={activeOrgId} shifts={shifts}/>
   };
 
   const addBranch=async()=>{
@@ -1291,6 +1325,41 @@ function AdminSettings({user, notify, activeOrgId}) {
           <button style={S.btn} onClick={addBranch}>Add branch</button>
         </div>
       )}
+    </div>
+  );
+}
+
+function OrgDefaultShift({notify, activeOrgId, shifts}) {
+  const [defShift, setDefShift] = useState("");
+  const [orgShifts, setOrgShifts] = useState(shifts||[]);
+
+  useEffect(()=>{
+    if(!activeOrgId) return;
+    Promise.all([
+      GET(`/api/orgs/${activeOrgId}/default-shift`),
+      GET("/api/shifts", {org_id: activeOrgId}),
+    ]).then(([d, s]) => {
+      setDefShift(d.default_shift_id || "");
+      setOrgShifts(s || []);
+    }).catch(()=>{});
+  },[activeOrgId]);
+
+  const save = async () => {
+    try {
+      await PATCH(`/api/orgs/${activeOrgId}/default-shift`, {default_shift_id: defShift || null});
+      notify("Default shift saved ✓");
+    } catch(e) { notify(e.message, "error"); }
+  };
+
+  return(
+    <div style={{background:"#f0faf4",borderRadius:16,padding:16,marginTop:12,border:"1.5px solid #86efac"}}>
+      <p style={{color:"#166534",fontWeight:800,fontSize:14,marginBottom:4}}>🕐 Organisation Default Shift</p>
+      <p style={{color:"#6b7280",fontSize:12,marginBottom:10}}>All employees will use this shift unless specifically assigned a different one by a manager</p>
+      <select style={{...S.select,marginBottom:10}} value={defShift} onChange={e=>setDefShift(e.target.value)}>
+        <option value="">No default shift</option>
+        {orgShifts.map(s=><option key={s.id} value={s.id}>{s.name} · {s.start_time?.slice(0,5)}–{s.end_time?.slice(0,5)}</option>)}
+      </select>
+      <button style={S.btn} onClick={save}>Save default shift</button>
     </div>
   );
 }
