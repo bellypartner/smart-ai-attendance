@@ -555,15 +555,258 @@ app.post('/api/attendance/checkin', auth(['employee']), async (req, res) => {
       ORDER BY ss.is_override DESC LIMIT 1
     `, [req.user.id, date]);
 
+    // ============================================================
+// FIXES FOR App.jsx — 4 bugs
+// ============================================================
+
+// ── FIX 1: "Invalid Date" in History ─────────────────────────
+// The date field from PostgreSQL comes as "2026-05-09T00:00:00.000Z"
+// fmtD() does new Date(ds+"T12:00:00") which fails on full ISO strings
+// 
+// Find function fmtD in App.jsx (near top):
+//   const fmtD  = ds => new Date(ds+"T12:00:00")...
+// Replace BOTH fmtD and fmtDF with these:
+
+const fmtD  = ds => {
+  const clean = ds ? String(ds).split('T')[0] : '';
+  if(!clean) return 'Invalid Date';
+  return new Date(clean + 'T12:00:00').toLocaleDateString("en-IN",{day:"numeric",month:"short",weekday:"short"});
+};
+
+const fmtDF = ds => {
+  const clean = ds ? String(ds).split('T')[0] : '';
+  if(!clean) return '—';
+  return new Date(clean + 'T12:00:00').toLocaleDateString("en-IN",{day:"numeric",month:"long",year:"numeric"});
+};
+
+// Also fix the grouped records in EmpHistory — the date key from API
+// may be a full ISO string. Fix the grouping:
+// Find: const grouped = records.reduce((a,r)=>{(a[r.date]=...
+// Replace with:
+const grouped = records.reduce((a,r)=>{
+  const dateKey = r.date ? String(r.date).split('T')[0] : r.date;
+  (a[dateKey]=a[dateKey]||[]).push({...r, date: dateKey});
+  return a;
+},{});
+
+
+// ── FIX 2: "Forbidden" on Salary — employee can't call admin endpoint ──────
+// The salary report endpoint requires admin role.
+// Need a separate employee salary endpoint.
+//
+// In server/index.js, find GET /api/salary-report and ADD this new route
+// BEFORE the existing salary-report route:
+
+app.get('/api/my-salary', auth(['employee']), async (req, res) => {
+  try {
+    const now = new Date();
+    const y = parseInt(req.query.year || now.getFullYear());
+    const m = parseInt(req.query.month || (now.getMonth() + 1));
+    const from = `${y}-${String(m).padStart(2,'0')}-01`;
+    const to = new Date(y, m, 0).toISOString().split('T')[0];
+
+    const { rows: settRows } = await db('SELECT * FROM org_settings WHERE org_id=$1', [req.user.org_id]);
+    const s = settRows[0] || {};
+
+    const { rows: att } = await db(
+      'SELECT * FROM attendance_records WHERE employee_id=$1 AND date BETWEEN $2 AND $3',
+      [req.user.id, from, to]
+    );
+    const { rows: lvs } = await db(
+      'SELECT * FROM leaves WHERE employee_id=$1 AND date BETWEEN $2 AND $3',
+      [req.user.id, from, to]
+    );
+    const { rows: userRows } = await db('SELECT salary FROM users WHERE id=$1', [req.user.id]);
+    const salary = userRows[0]?.salary || 0;
+
+    const presentDays = att.filter(a => a.check_in_time).length;
+    const lateDays = att.filter(a => a.is_late && a.approval_status !== 'rejected').length;
+    const unauthLeaves = lvs.filter(l => l.type === 'unauthorized').length;
+    const noShows = lvs.filter(l => l.type === 'noshow').length;
+    const casualUsed = lvs.filter(l => l.type === 'casual').length;
+    const wdm = s.working_days_per_month || 26;
+    const dailyRate = salary / wdm;
+    const earnedGross = presentDays * dailyRate;
+    const excessLates = Math.max(0, lateDays - (s.max_allowed_lates_per_month || 3));
+    const lateDeductions = lateDays * (s.late_deduction_per_occ || 50) + excessLates * (s.excess_late_penalty || 100);
+    const leaveDeductions = unauthLeaves * (s.unauth_leave_penalty || 200);
+    const noShowDeductions = noShows * (s.no_show_penalty || 250);
+    const totalDeductions = lateDeductions + leaveDeductions + noShowDeductions;
+
+    res.json({
+      salary, presentDays, lateDays, casualUsed, unauthLeaves, noShows,
+      dailyRate, earnedGross, lateDeductions, leaveDeductions, noShowDeductions,
+      totalDeductions, netEarned: Math.max(0, earnedGross - totalDeductions),
+      year: y, month: m, from, to,
+    });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+
+// ── FIX 3: EmpSalary — use /api/my-salary instead of /api/salary-report ────
+// Find function EmpSalary in App.jsx
+// Replace the entire function with:
+
+function EmpSalary({user, notify}) {
+  const [report, setReport] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const now = new Date();
+
+  useEffect(()=>{
+    GET("/api/my-salary", {year: now.getFullYear(), month: now.getMonth()+1})
+      .then(r => setReport(r))
+      .catch(e => notify(e.message, "error"))
+      .finally(() => setLoading(false));
+  },[]);
+
+  if(loading) return <Spinner/>;
+  if(!report) return <Empty icon="💰" msg="No salary data yet"/>;
+
+  return(
+    <div style={{padding:20}}>
+      <h2 style={{color:C.g800,fontSize:22,fontWeight:800,marginBottom:16}}>Salary Dashboard</h2>
+      <div style={{background:`linear-gradient(135deg,${C.g800},${C.g600})`,borderRadius:24,padding:24,marginBottom:20}}>
+        <p style={{color:"rgba(255,255,255,0.65)",fontSize:13}}>{now.toLocaleDateString("en-IN",{month:"long",year:"numeric"})}</p>
+        <p style={{color:C.white,fontSize:36,fontWeight:900,margin:"6px 0 2px"}}>{fmt(report.netEarned||0)}</p>
+        <p style={{color:"rgba(255,255,255,0.55)",fontSize:13}}>of {fmt(report.salary||0)}/month</p>
+        <div style={{background:"rgba(255,255,255,0.15)",borderRadius:8,height:7,marginTop:14}}>
+          <div style={{background:C.g300,height:7,borderRadius:8,width:`${Math.min(100,((report.netEarned||0)/(report.salary||1))*100)}%`}}/>
+        </div>
+      </div>
+      <div style={{background:C.white,borderRadius:20,padding:20,boxShadow:`0 2px 12px ${C.g300}44`}}>
+        {[
+          ["Days Present", report.presentDays, C.g600],
+          ["Late days", report.lateDays, C.amber],
+          ["Casual leave used", report.casualUsed, C.blue],
+          ["Daily rate", fmt(report.dailyRate||0), C.gr700],
+          ["Gross earned", fmt(report.earnedGross||0), C.g700],
+          ["Late deductions", `-${fmt(report.lateDeductions||0)}`, C.amber],
+          ["Leave penalties", `-${fmt(report.leaveDeductions||0)}`, C.red],
+          ["No-show penalties", `-${fmt(report.noShowDeductions||0)}`, C.red],
+        ].map(([l,v,c])=>(
+          <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"10px 0",borderBottom:`1px solid ${C.g50}`}}>
+            <span style={{color:C.gr500,fontSize:14}}>{l}</span>
+            <span style={{color:c||C.gr900,fontWeight:600,fontSize:14}}>{v}</span>
+          </div>
+        ))}
+        <div style={{display:"flex",justifyContent:"space-between",padding:"14px 0 0"}}>
+          <span style={{color:C.g800,fontWeight:800,fontSize:16}}>Net Earned</span>
+          <span style={{color:C.g700,fontWeight:900,fontSize:20}}>{fmt(report.netEarned||0)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ── FIX 4: No shift assigned — checkin route fallback to org default ────────
+// In server/index.js, find the checkin route:
+//   app.post('/api/attendance/checkin'
+// Find this block inside it:
+//     let shift = schedRows[0];
+//     if (!shift) {
+//       const { rows: def } = await db(`
+//         SELECT st.id AS shift_id, st.name, st.start_time, st.end_time
+//         FROM users u JOIN shift_templates st ON st.id = u.default_shift_id
+//         WHERE u.id=$1
+//       `, [req.user.id]);
+//       shift = def[0];
+//     }
+//     if (!shift) return res.status(400).json...
+//
+// REPLACE with this (adds org default shift fallback):
+
     let shift = schedRows[0];
+
+    // Fallback 1: employee's own default shift
     if (!shift) {
-      const { rows: def } = await db(`
+      const { rows: empDef } = await db(`
         SELECT st.id AS shift_id, st.name, st.start_time, st.end_time
-        FROM users u JOIN shift_templates st ON st.id = u.default_shift_id
-        WHERE u.id=$1
+        FROM users u
+        JOIN shift_templates st ON st.id = u.default_shift_id
+        WHERE u.id = $1
       `, [req.user.id]);
-      shift = def[0];
+      shift = empDef[0];
     }
+
+    // Fallback 2: organisation default shift
+    if (!shift) {
+      const { rows: orgDef } = await db(`
+        SELECT st.id AS shift_id, st.name, st.start_time, st.end_time
+        FROM org_settings os
+        JOIN shift_templates st ON st.id = os.default_shift_id
+        WHERE os.org_id = $1
+      `, [req.user.org_id]);
+      shift = orgDef[0];
+    }
+
+    // No shift found anywhere
+    if (!shift) {
+      return res.status(400).json({
+        error: 'No shift assigned. Please contact your admin to set a default shift for the organisation.'
+      });
+    }
+
+
+// ── FIX 5: EmpHistory date grouping fix ────────────────────────────────────
+// Find function EmpHistory in App.jsx
+// Replace the entire function with this:
+
+function EmpHistory({user, notify}) {
+  const [records, setRecords] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const now = new Date();
+  const from = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`;
+  const to = new Date(now.getFullYear(), now.getMonth()+1, 0).toISOString().split('T')[0];
+
+  useEffect(()=>{
+    GET("/api/attendance",{from, to, employee_id: user.id})
+      .then(r => setRecords(r||[]))
+      .catch(e => notify(e.message,"error"))
+      .finally(()=>setLoading(false));
+  },[]);
+
+  // Group by date — strip timezone from date string
+  const grouped = records.reduce((a,r)=>{
+    const dk = r.date ? String(r.date).split('T')[0] : null;
+    if(!dk) return a;
+    (a[dk] = a[dk]||[]).push({...r, date: dk});
+    return a;
+  },{});
+
+  if(loading) return <Spinner/>;
+  return(
+    <div style={{padding:20}}>
+      <h2 style={{color:C.g800,fontSize:22,fontWeight:800,marginBottom:16}}>Attendance History</h2>
+      {Object.entries(grouped).sort((a,b)=>b[0].localeCompare(a[0])).map(([ds, recs])=>{
+        // attendance_records has ONE row per day with check_in_time + check_out_time
+        const rec = recs[0];
+        const cin = rec?.check_in_time ? String(rec.check_in_time).slice(0,5) : null;
+        const cout = rec?.check_out_time ? String(rec.check_out_time).slice(0,5) : null;
+        const worked = rec?.worked_mins;
+        return(
+          <div key={ds} style={{background:C.white,borderRadius:18,padding:16,marginBottom:10,boxShadow:`0 2px 8px ${C.g300}33`,borderLeft:`4px solid ${rec?.is_late?C.amber:C.g500}`}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+              <span style={{fontWeight:800,color:C.gr900}}>{fmtD(ds)}</span>
+              <div style={{display:"flex",gap:6}}>
+                {rec?.shift_name&&<span style={{background:C.g100,color:C.g700,fontSize:10,padding:"2px 8px",borderRadius:20,fontWeight:700}}>{rec.shift_name}</span>}
+                {rec?.is_late&&<span style={{background:"#fffbeb",color:C.amber,fontSize:10,padding:"2px 8px",borderRadius:20,fontWeight:700}}>{rec.late_mins}m LATE</span>}
+                {rec?.admin_edited&&<span style={{background:"#ede9fe",color:C.violet,fontSize:10,padding:"2px 8px",borderRadius:20,fontWeight:700}}>EDITED</span>}
+              </div>
+            </div>
+            <div style={{display:"flex",gap:16}}>
+              <span style={{color:C.g600,fontSize:14,fontWeight:600}}>▶ {cin||"—"}</span>
+              <span style={{color:C.gr500,fontSize:14}}>⏹ {cout||"—"}</span>
+              {worked!=null&&<span style={{color:C.gr500,fontSize:13}}>⏱ {Math.floor(worked/60)}h {worked%60}m</span>}
+            </div>
+            {rec?.branch_name&&<p style={{color:C.gr500,fontSize:12,marginTop:5}}>📍 {rec.branch_name}</p>}
+          </div>
+        );
+      })}
+      {Object.keys(grouped).length===0&&<Empty icon="📋" msg="No attendance this month"/>}
+    </div>
+  );
+}
     if (!shift) return res.status(400).json({ error: 'No shift assigned for today. Contact your admin.' });
 
     const { rows: settRows } = await db('SELECT * FROM org_settings WHERE org_id=$1', [oid]);
@@ -797,7 +1040,35 @@ app.get('/api/leaves/audit', auth(['super_admin', 'org_admin', 'branch_admin']),
 // ============================================================
 // SALARY REPORT
 // ============================================================
-
+app.get('/api/my-salary', auth(['employee']), async (req, res) => {
+  try {
+    const now = new Date();
+    const y = parseInt(req.query.year || now.getFullYear());
+    const m = parseInt(req.query.month || (now.getMonth() + 1));
+    const from = `${y}-${pad(m)}-01`;
+    const to = new Date(y, m, 0).toISOString().split('T')[0];
+    const [{ rows: settRows }, { rows: att }, { rows: lvs }, { rows: uRows }] = await Promise.all([
+      db('SELECT * FROM org_settings WHERE org_id=$1', [req.user.org_id]),
+      db('SELECT * FROM attendance_records WHERE employee_id=$1 AND date BETWEEN $2 AND $3', [req.user.id, from, to]),
+      db('SELECT * FROM leaves WHERE employee_id=$1 AND date BETWEEN $2 AND $3', [req.user.id, from, to]),
+      db('SELECT salary FROM users WHERE id=$1', [req.user.id]),
+    ]);
+    const s = settRows[0] || {}, salary = uRows[0]?.salary || 0;
+    const presentDays = att.filter(a => a.check_in_time).length;
+    const lateDays = att.filter(a => a.is_late && a.approval_status !== 'rejected').length;
+    const unauthLeaves = lvs.filter(l => l.type === 'unauthorized').length;
+    const noShows = lvs.filter(l => l.type === 'noshow').length;
+    const casualUsed = lvs.filter(l => l.type === 'casual').length;
+    const dailyRate = salary / (s.working_days_per_month || 26);
+    const earnedGross = presentDays * dailyRate;
+    const excessLates = Math.max(0, lateDays - (s.max_allowed_lates_per_month || 3));
+    const lateDeductions = lateDays * (s.late_deduction_per_occ || 50) + excessLates * (s.excess_late_penalty || 100);
+    const leaveDeductions = unauthLeaves * (s.unauth_leave_penalty || 200);
+    const noShowDeductions = noShows * (s.no_show_penalty || 250);
+    const totalDeductions = lateDeductions + leaveDeductions + noShowDeductions;
+    res.json({ salary, presentDays, lateDays, casualUsed, unauthLeaves, noShows, dailyRate, earnedGross, lateDeductions, leaveDeductions, noShowDeductions, totalDeductions, netEarned: Math.max(0, earnedGross - totalDeductions) });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
 app.get('/api/salary-report', auth(['super_admin', 'org_admin', 'branch_admin']), async (req, res) => {
   try {
     const oid = orgId(req);
