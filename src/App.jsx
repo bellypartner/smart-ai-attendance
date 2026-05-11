@@ -577,29 +577,6 @@ function EmpSalary({user, notify}) {
 //
 // REPLACE with this (adds org default shift fallback):
 
-    let shift = schedRows[0];
-
-    // Fallback 1: employee's own default shift
-    if (!shift) {
-      const { rows: empDef } = await db(`
-        SELECT st.id AS shift_id, st.name, st.start_time, st.end_time
-        FROM users u
-        JOIN shift_templates st ON st.id = u.default_shift_id
-        WHERE u.id = $1
-      `, [req.user.id]);
-      shift = empDef[0];
-    }
-
-    // Fallback 2: organisation default shift
-    if (!shift) {
-      const { rows: orgDef } = await db(`
-        SELECT st.id AS shift_id, st.name, st.start_time, st.end_time
-        FROM org_settings os
-        JOIN shift_templates st ON st.id = os.default_shift_id
-        WHERE os.org_id = $1
-      `, [req.user.org_id]);
-      shift = orgDef[0];
-    }
 
 
 // ── FIX 5: EmpHistory date grouping fix ────────────────────────────────────
