@@ -71,8 +71,8 @@ const today = () => new Date().toLocaleDateString("en-CA", {timeZone:"Asia/Kolka
 const nowT  = () => new Date().toLocaleTimeString("en-GB", {timeZone:"Asia/Kolkata",hour:"2-digit",minute:"2-digit"});
 const toM   = t => { if(!t) return 0; const str=String(t).slice(0,5); const[h,m]=str.split(":").map(Number); return h*60+m; };
 const pad   = n => String(n).padStart(2,"0");
-const fmtD = ds => { const c=ds?String(ds).split('T')[0]:''; if(!c)return'Invalid Date'; return new Date(c+'T12:00:00').toLocaleDateString("en-IN",{day:"numeric",month:"short",weekday:"short"}); };
-const fmtDF = ds => { const c=ds?String(ds).split('T')[0]:''; if(!c)return'—'; return new Date(c+'T12:00:00').toLocaleDateString("en-IN",{day:"numeric",month:"long",year:"numeric"}); };
+const fmtD  = ds => { const c=ds?String(ds).split("T")[0]:""; if(!c)return"—"; return new Date(c+"T12:00:00").toLocaleDateString("en-IN",{day:"numeric",month:"short",weekday:"short"}); };
+const fmtDF = ds => { const c=ds?String(ds).split("T")[0]:""; if(!c)return"—"; return new Date(c+"T12:00:00").toLocaleDateString("en-IN",{day:"numeric",month:"long",year:"numeric"}); };
 
 function shiftMins(sh) { if(!sh)return 480; const s=toM(sh.start_time||sh.start),e=toM(sh.end_time||sh.end); return(e>s?e-s:1440-s+e)-(sh.break_mins||sh.breakMins||0); }
 function lateM(scan, start) { let d=toM(scan)-toM(start); if(d<-720)d+=1440; return d; }
@@ -103,56 +103,39 @@ function QRCanvas({data:qd, size=200}) {
 
 // ── QR SCANNER ─────────────────────────────────────────────────────────────
 function QRScanner({onScan, onClose, branches}) {
-  const vRef = useRef(null);
-  const [err, setErr] = useState(null);
-  const [streaming, setStreaming] = useState(false);
-  const [selBranch, setSelBranch] = useState(branches[0]?.id || "");
-
-  useEffect(() => {
+  const vRef=useRef(null);
+  const [err,setErr]=useState(null), [streaming,setStreaming]=useState(false), [man,setMan]=useState("");
+  useEffect(()=>{
     let st;
     navigator.mediaDevices?.getUserMedia({video:{facingMode:"environment"}})
       .then(s=>{st=s;if(vRef.current)vRef.current.srcObject=s;setStreaming(true);})
       .catch(()=>setErr("Camera unavailable"));
     return ()=>st?.getTracks().forEach(t=>t.stop());
   },[]);
-
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.72)",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:999}}>
       <div style={{background:C.white,borderRadius:"28px 28px 0 0",padding:24,width:"100%",maxWidth:480,animation:"slideUp .3s ease"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
-          <div>
-            <h3 style={{fontSize:18,fontWeight:800,color:C.g800}}>Mark Attendance</h3>
-            <p style={{color:C.gr500,fontSize:12}}>Scan QR or select your branch below</p>
-          </div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+          <h3 style={{fontSize:18,fontWeight:800,color:C.g800}}>Scan Branch QR</h3>
           <button onClick={onClose} style={S.iconBtn}>✕</button>
         </div>
-        <div style={{background:"#000",borderRadius:18,height:150,position:"relative",overflow:"hidden",marginBottom:14}}>
+        <div style={{background:"#000",borderRadius:18,height:160,position:"relative",overflow:"hidden",marginBottom:16}}>
           <video ref={vRef} autoPlay playsInline muted style={{width:"100%",height:"100%",objectFit:"cover"}}/>
           <div style={{position:"absolute",inset:14,border:`2px solid ${C.g500}`,borderRadius:10}}/>
           {streaming&&<div style={{position:"absolute",left:14,right:14,height:2,background:`linear-gradient(90deg,transparent,${C.g500},transparent)`,top:"40%",animation:"scanline 2s ease-in-out infinite"}}/>}
         </div>
         {err&&<p style={{color:C.amber,fontSize:13,textAlign:"center",marginBottom:10}}>⚠ {err}</p>}
-        <p style={{color:C.g700,fontSize:13,fontWeight:700,marginBottom:8}}>Select your branch:</p>
-        <select
-          style={{...S.select,marginBottom:10}}
-          value={selBranch}
-          onChange={e=>setSelBranch(e.target.value)}
-        >
-          <option value="">— Select branch —</option>
-          {branches.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}
-        </select>
-        <button
-          onClick={()=>{if(!selBranch){setErr("Select a branch first");return;}onScan({branchId:selBranch,token:"SMARTAI_V4",app:"3SL"});}}
-          disabled={!selBranch}
-          style={{...S.btn,opacity:selBranch?1:0.5}}
-        >
-          📍 Mark at {branches.find(b=>b.id===selBranch)?.name||"Branch"}
-        </button>
-        <p style={{color:C.gr500,fontSize:11,textAlign:"center",marginTop:8}}>Your location will be verified automatically</p>
+        <input style={S.input} placeholder="Paste QR data…" value={man} onChange={e=>setMan(e.target.value)}/>
+        <button style={S.btn} onClick={()=>{try{const d=JSON.parse(man);if(d.branchId)onScan(d);else setErr("Invalid QR");}catch{setErr("Bad format");}}}>Submit manual</button>
+        <p style={{color:C.g600,fontSize:12,fontWeight:700,margin:"14px 0 8px"}}>⚡ Quick scan</p>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          {branches.map(b=><button key={b.id} style={S.outline} onClick={()=>onScan({branchId:b.id,token:"SMARTAI_V4",app:"3SL"})}>📍 {b.name}</button>)}
+        </div>
       </div>
     </div>
   );
 }
+
 // ── LOADING & ERROR ────────────────────────────────────────────────────────
 function Spinner() {
   return <div style={{display:"flex",justifyContent:"center",padding:60}}><div style={{width:32,height:32,border:`3px solid ${C.g100}`,borderTopColor:C.g600,borderRadius:"50%",animation:"spin .7s linear infinite"}}/></div>;
@@ -263,37 +246,21 @@ function EmpApp({user, notify, page, setPage, onLogout}) {
   useEffect(()=>{ load(); },[load]);
 
   const handleScan = (qd) => {
-  setShowScanner(false);
-  const scBr = branches.find(b => b.id === qd.branchId);
-  if(!scBr) { notify("Branch not found", "error"); return; }
-  if(todayAtt?.cin && todayAtt?.cout) { notify("Already done for today", "error"); return; }
-
-  notify("📍 Checking your location…", "info");
-
-  if(navigator.geolocation) {
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const dist = geoDist(pos.coords.latitude, pos.coords.longitude, scBr.lat, scBr.lng);
-        if(dist > (scBr.radius || 200)) {
-          notify(`❌ You are ${Math.round(dist)}m away. Must be within ${scBr.radius || 200}m of ${scBr.name}`, "error");
-          return;
-        }
+    setShowScanner(false);
+    const scBr = branches.find(b=>b.id===qd.branchId);
+    if(!scBr) { notify("Invalid QR","error"); return; }
+    if(todayAtt?.cin && todayAtt?.cout) { notify("Already done for today","error"); return; }
+    navigator.geolocation?.getCurrentPosition(
+      pos => {
+        const dist = geoDist(pos.coords.latitude,pos.coords.longitude,scBr.lat,scBr.lng);
+        if(dist > scBr.radius) { notify(`Outside geo-fence! ${Math.round(dist)}m away (max ${scBr.radius}m)`,"error"); return; }
         processAtt(qd.branchId, pos.coords);
       },
-      (geoErr) => {
-        const msg = geoErr.code === 1
-          ? "⚠ Location permission denied — marking without geo verification"
-          : "⚠ GPS unavailable — marking without geo verification";
-        notify(msg, "warn");
-        processAtt(qd.branchId, null);
-      },
-      { timeout: 10000, enableHighAccuracy: true, maximumAge: 0 }
+      () => processAtt(qd.branchId, null),
+      {timeout:7000,enableHighAccuracy:true}
     );
-  } else {
-    notify("⚠ GPS not supported — marking anyway", "warn");
-    processAtt(qd.branchId, null);
-  }
-};
+  };
+
   const processAtt = async (branchId, coords) => {
     try {
       if(!todayAtt?.cin) {
@@ -472,165 +439,40 @@ function EmpShifts({user, notify}) {
   );
 }
 
-// ============================================================
-// FIXES FOR App.jsx — 4 bugs
-// ============================================================
-
-// ── FIX 1: "Invalid Date" in History ─────────────────────────
-// The date field from PostgreSQL comes as "2026-05-09T00:00:00.000Z"
-// fmtD() does new Date(ds+"T12:00:00") which fails on full ISO strings
-// 
-// Find function fmtD in App.jsx (near top):
-//   const fmtD  = ds => new Date(ds+"T12:00:00")...
-// Replace BOTH fmtD and fmtDF with these:
-
-// Also fix the grouped records in EmpHistory — the date key from API
-// may be a full ISO string. Fix the grouping:
-// Find: const grouped = records.reduce((a,r)=>{(a[r.date]=...
-// Replace with:
-const grouped = records.reduce((a,r)=>{
-  const dateKey = r.date ? String(r.date).split('T')[0] : r.date;
-  (a[dateKey]=a[dateKey]||[]).push({...r, date: dateKey});
-  return a;
-},{});
-
-
-// ── FIX 2: "Forbidden" on Salary — employee can't call admin endpoint ──────
-// The salary report endpoint requires admin role.
-// Need a separate employee salary endpoint.
-//
-// In server/index.js, find GET /api/salary-report and ADD this new route
-// BEFORE the existing salary-report route:
-
-
-
-// ── FIX 3: EmpSalary — use /api/my-salary instead of /api/salary-report ────
-// Find function EmpSalary in App.jsx
-// Replace the entire function with:
-
-function EmpSalary({user, notify}) {
-  const [report, setReport] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const now = new Date();
-
-  useEffect(()=>{
-    GET("/api/my-salary", {year: now.getFullYear(), month: now.getMonth()+1})
-      .then(r => setReport(r))
-      .catch(e => notify(e.message, "error"))
-      .finally(() => setLoading(false));
-  },[]);
-
-  if(loading) return <Spinner/>;
-  if(!report) return <Empty icon="💰" msg="No salary data yet"/>;
-
-  return(
-    <div style={{padding:20}}>
-      <h2 style={{color:C.g800,fontSize:22,fontWeight:800,marginBottom:16}}>Salary Dashboard</h2>
-      <div style={{background:`linear-gradient(135deg,${C.g800},${C.g600})`,borderRadius:24,padding:24,marginBottom:20}}>
-        <p style={{color:"rgba(255,255,255,0.65)",fontSize:13}}>{now.toLocaleDateString("en-IN",{month:"long",year:"numeric"})}</p>
-        <p style={{color:C.white,fontSize:36,fontWeight:900,margin:"6px 0 2px"}}>{fmt(report.netEarned||0)}</p>
-        <p style={{color:"rgba(255,255,255,0.55)",fontSize:13}}>of {fmt(report.salary||0)}/month</p>
-        <div style={{background:"rgba(255,255,255,0.15)",borderRadius:8,height:7,marginTop:14}}>
-          <div style={{background:C.g300,height:7,borderRadius:8,width:`${Math.min(100,((report.netEarned||0)/(report.salary||1))*100)}%`}}/>
-        </div>
-      </div>
-      <div style={{background:C.white,borderRadius:20,padding:20,boxShadow:`0 2px 12px ${C.g300}44`}}>
-        {[
-          ["Days Present", report.presentDays, C.g600],
-          ["Late days", report.lateDays, C.amber],
-          ["Casual leave used", report.casualUsed, C.blue],
-          ["Daily rate", fmt(report.dailyRate||0), C.gr700],
-          ["Gross earned", fmt(report.earnedGross||0), C.g700],
-          ["Late deductions", `-${fmt(report.lateDeductions||0)}`, C.amber],
-          ["Leave penalties", `-${fmt(report.leaveDeductions||0)}`, C.red],
-          ["No-show penalties", `-${fmt(report.noShowDeductions||0)}`, C.red],
-        ].map(([l,v,c])=>(
-          <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"10px 0",borderBottom:`1px solid ${C.g50}`}}>
-            <span style={{color:C.gr500,fontSize:14}}>{l}</span>
-            <span style={{color:c||C.gr900,fontWeight:600,fontSize:14}}>{v}</span>
-          </div>
-        ))}
-        <div style={{display:"flex",justifyContent:"space-between",padding:"14px 0 0"}}>
-          <span style={{color:C.g800,fontWeight:800,fontSize:16}}>Net Earned</span>
-          <span style={{color:C.g700,fontWeight:900,fontSize:20}}>{fmt(report.netEarned||0)}</span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-
-// ── FIX 4: No shift assigned — checkin route fallback to org default ────────
-// In server/index.js, find the checkin route:
-//   app.post('/api/attendance/checkin'
-// Find this block inside it:
-//     let shift = schedRows[0];
-//     if (!shift) {
-//       const { rows: def } = await db(`
-//         SELECT st.id AS shift_id, st.name, st.start_time, st.end_time
-//         FROM users u JOIN shift_templates st ON st.id = u.default_shift_id
-//         WHERE u.id=$1
-//       `, [req.user.id]);
-//       shift = def[0];
-//     }
-//     if (!shift) return res.status(400).json...
-//
-// REPLACE with this (adds org default shift fallback):
-
-
-
-// ── FIX 5: EmpHistory date grouping fix ────────────────────────────────────
-// Find function EmpHistory in App.jsx
-// Replace the entire function with this:
-
 function EmpHistory({user, notify}) {
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
-  const now = new Date();
-  const from = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`;
-  const to = new Date(now.getFullYear(), now.getMonth()+1, 0).toISOString().split('T')[0];
-
+  const {from,to} = monthRange();
   useEffect(()=>{
-    GET("/api/attendance",{from, to, employee_id: user.id})
-      .then(r => setRecords(r||[]))
-      .catch(e => notify(e.message,"error"))
+    GET("/api/attendance",{from,to,employee_id:user.id})
+      .then(r=>setRecords(r||[]))
+      .catch(e=>notify(e.message,"error"))
       .finally(()=>setLoading(false));
   },[]);
-
-  // Group by date — strip timezone from date string
-  const grouped = records.reduce((a,r)=>{
-    const dk = r.date ? String(r.date).split('T')[0] : null;
-    if(!dk) return a;
-    (a[dk] = a[dk]||[]).push({...r, date: dk});
-    return a;
-  },{});
-
+  const grouped = records.reduce((a,r)=>{ const dk=r.date?String(r.date).split("T")[0]:null; if(!dk)return a; (a[dk]=a[dk]||[]).push({...r,date:dk}); return a; },{});
   if(loading) return <Spinner/>;
   return(
     <div style={{padding:20}}>
       <h2 style={{color:C.g800,fontSize:22,fontWeight:800,marginBottom:16}}>Attendance History</h2>
-      {Object.entries(grouped).sort((a,b)=>b[0].localeCompare(a[0])).map(([ds, recs])=>{
-        // attendance_records has ONE row per day with check_in_time + check_out_time
-        const rec = recs[0];
-        const cin = rec?.check_in_time ? String(rec.check_in_time).slice(0,5) : null;
-        const cout = rec?.check_out_time ? String(rec.check_out_time).slice(0,5) : null;
-        const worked = rec?.worked_mins;
+      {Object.entries(grouped).sort((a,b)=>b[0].localeCompare(a[0])).map(([ds,recs])=>{
+        const rec=recs[0]; const cin=rec?.check_in_time?{...rec,check_in_time:String(rec.check_in_time).slice(0,5)}:null; const cout=rec?.check_out_time?String(rec.check_out_time).slice(0,5):null;
+        const worked=rec?.worked_mins;
         return(
-          <div key={ds} style={{background:C.white,borderRadius:18,padding:16,marginBottom:10,boxShadow:`0 2px 8px ${C.g300}33`,borderLeft:`4px solid ${rec?.is_late?C.amber:C.g500}`}}>
+          <div key={ds} style={{background:C.white,borderRadius:18,padding:16,marginBottom:10,boxShadow:`0 2px 8px ${C.g300}33`,borderLeft:`4px solid ${cin?.is_late?C.amber:C.g500}`}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
               <span style={{fontWeight:800,color:C.gr900}}>{fmtD(ds)}</span>
               <div style={{display:"flex",gap:6}}>
-                {rec?.shift_name&&<span style={{background:C.g100,color:C.g700,fontSize:10,padding:"2px 8px",borderRadius:20,fontWeight:700}}>{rec.shift_name}</span>}
-                {rec?.is_late&&<span style={{background:"#fffbeb",color:C.amber,fontSize:10,padding:"2px 8px",borderRadius:20,fontWeight:700}}>{rec.late_mins}m LATE</span>}
-                {rec?.admin_edited&&<span style={{background:"#ede9fe",color:C.violet,fontSize:10,padding:"2px 8px",borderRadius:20,fontWeight:700}}>EDITED</span>}
+                {cin?.shift_name&&<span style={{background:C.g100,color:C.g700,fontSize:10,padding:"2px 8px",borderRadius:20,fontWeight:700}}>{cin.shift_name}</span>}
+                {cin?.is_late&&<span style={{background:"#fffbeb",color:C.amber,fontSize:10,padding:"2px 8px",borderRadius:20,fontWeight:700}}>{cin.late_mins}m LATE</span>}
+                {cin?.admin_edited&&<span style={{background:"#ede9fe",color:C.violet,fontSize:10,padding:"2px 8px",borderRadius:20,fontWeight:700}}>EDITED</span>}
               </div>
             </div>
             <div style={{display:"flex",gap:16}}>
-              <span style={{color:C.g600,fontSize:14,fontWeight:600}}>▶ {cin||"—"}</span>
+              <span style={{color:C.g600,fontSize:14,fontWeight:600}}>▶ {cin?.check_in_time||"—"}</span>
               <span style={{color:C.gr500,fontSize:14}}>⏹ {cout||"—"}</span>
               {worked!=null&&<span style={{color:C.gr500,fontSize:13}}>⏱ {Math.floor(worked/60)}h {worked%60}m</span>}
             </div>
-            {rec?.branch_name&&<p style={{color:C.gr500,fontSize:12,marginTop:5}}>📍 {rec.branch_name}</p>}
+            {cin?.branch_name&&<p style={{color:C.gr500,fontSize:12,marginTop:5}}>📍 {cin.branch_name}</p>}
           </div>
         );
       })}
@@ -639,6 +481,38 @@ function EmpHistory({user, notify}) {
   );
 }
 
+function EmpSalary({user, notify}) {
+  const [report, setReport] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const now = new Date();
+  useEffect(()=>{
+    GET("/api/my-salary",{year:now.getFullYear(),month:now.getMonth()+1})
+      .then(r=>setReport(r))
+      .catch(e=>notify(e.message,"error"))
+      .finally(()=>setLoading(false));
+  },[]);
+  if(loading) return <Spinner/>;
+  if(!report) return <Empty icon="💰" msg="No salary data yet"/>;
+  return(
+    <div style={{padding:20}}>
+      <h2 style={{color:C.g800,fontSize:22,fontWeight:800,marginBottom:16}}>Salary Dashboard</h2>
+      <div style={{background:`linear-gradient(135deg,${C.g800},${C.g600})`,borderRadius:24,padding:24,marginBottom:20}}>
+        <p style={{color:"rgba(255,255,255,0.65)",fontSize:13}}>{now.toLocaleDateString("en-IN",{month:"long",year:"numeric"})}</p>
+        <p style={{color:C.white,fontSize:36,fontWeight:900,margin:"6px 0 2px"}}>{fmt(report.netEarned||0)}</p>
+        <p style={{color:"rgba(255,255,255,0.55)",fontSize:13}}>of {fmt(report?.salary||user.salary||0)}/month</p>
+        <div style={{background:"rgba(255,255,255,0.15)",borderRadius:8,height:7,marginTop:14}}>
+          <div style={{background:C.g300,height:7,borderRadius:8,width:`${Math.min(100,((report.netEarned||0)/(user.salary||1))*100)}%`}}/>
+        </div>
+      </div>
+      {[["Days Present",report.presentDays],["Gross Earned",fmt(report.earnedGross||0)],["Late Deductions",`-${fmt(report.lateDeductions||0)}`],["Leave Penalties",`-${fmt(report.leaveDeductions||0)}`],["No-Show Penalties",`-${fmt(report.noShowDeductions||0)}`],["Net Earned",fmt(report.netEarned||0)]].map(([l,v])=>(
+        <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"10px 0",borderBottom:`1px solid ${C.g50}`}}>
+          <span style={{color:C.gr500,fontSize:14}}>{l}</span>
+          <span style={{color:C.gr900,fontWeight:700,fontSize:14}}>{v}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function EmpProfile({user, notify}) {
   const [history, setHistory] = useState([]);
@@ -684,9 +558,6 @@ function AdminApp({user, notify, page, setPage, activeOrgId, setActiveOrgId, onL
     {k:"adm_reports",i:"📊",l:"Reports"},
     ...(isSA||isOA?[{k:"adm_edit",i:"✏️",l:"Edit Att"}]:[]),
     {k:"adm_settings",i:"⚙️",l:"Settings"},
-    {k:"adm_att_table", i:"📊", l:"Att."},
-    {k:"adm_leave_hist", i:"📝", l:"Leaves"},
-    {k:"adm_daily",     i:"🟢", l:"Daily"},
   ];
   const pages={
     sa_orgs: <SuperAdminOrgs notify={notify} setActiveOrgId={setActiveOrgId} setPage={setPage} activeOrgId={activeOrgId}/>,
@@ -698,9 +569,6 @@ function AdminApp({user, notify, page, setPage, activeOrgId, setActiveOrgId, onL
     adm_qr: <AdminQR notify={notify} activeOrgId={activeOrgId}/>,
     adm_reports: <AdminReports user={user} notify={notify} activeOrgId={activeOrgId}/>,
     adm_edit: <AdminEditAtt user={user} notify={notify} activeOrgId={activeOrgId}/>,
-    adm_att_table: <AdminAttendanceTable user={user} notify={notify} activeOrgId={activeOrgId}/>,
-    adm_leave_hist: <AdminLeaveHistory user={user} notify={notify} activeOrgId={activeOrgId}/>,
-    adm_daily: <AdminDailyBoard notify={notify} activeOrgId={activeOrgId}/>,
     adm_settings: <AdminSettings user={user} notify={notify} activeOrgId={activeOrgId}/>,
   };
   return(
@@ -989,7 +857,7 @@ function StaffForm({emp, branches, shifts, activeOrgId, user, notify, onSave, on
     name:emp?.name||"",phone:emp?.phone||"",password:"",branch_id:emp?.branch_id||branches[0]?.id||"",
     role:emp?.role||"employee",designation:emp?.designation||"",salary:emp?.salary||"",
     default_shift_id:emp?.default_shift_id||"",manager_id:emp?.manager_id||"",
-    date_of_joining: emp?.date_of_joining ? String(emp.date_of_joining).split('T')[0] : today(),
+    date_of_joining:emp?.date_of_joining||today(),employee_code:emp?.employee_code||"",
   });
   const set=(k,v)=>setF(p=>({...p,[k]:v}));
   return(
@@ -1370,7 +1238,6 @@ function AdminSettings({user, notify, activeOrgId}) {
   const saveSettings=async()=>{
     try{await PATCH(`/api/orgs/${activeOrgId}/settings`,settings);notify("Settings saved ✓");}
     catch(e){notify(e.message,"error");}
-    <OrgDefaultShift notify={notify} activeOrgId={activeOrgId} shifts={shifts}/>
   };
 
   const addBranch=async()=>{
@@ -1418,41 +1285,6 @@ function AdminSettings({user, notify, activeOrgId}) {
           <button style={S.btn} onClick={addBranch}>Add branch</button>
         </div>
       )}
-    </div>
-  );
-}
-
-function OrgDefaultShift({notify, activeOrgId, shifts}) {
-  const [defShift, setDefShift] = useState("");
-  const [orgShifts, setOrgShifts] = useState(shifts||[]);
-
-  useEffect(()=>{
-    if(!activeOrgId) return;
-    Promise.all([
-      GET(`/api/orgs/${activeOrgId}/default-shift`),
-      GET("/api/shifts", {org_id: activeOrgId}),
-    ]).then(([d, s]) => {
-      setDefShift(d.default_shift_id || "");
-      setOrgShifts(s || []);
-    }).catch(()=>{});
-  },[activeOrgId]);
-
-  const save = async () => {
-    try {
-      await PATCH(`/api/orgs/${activeOrgId}/default-shift`, {default_shift_id: defShift || null});
-      notify("Default shift saved ✓");
-    } catch(e) { notify(e.message, "error"); }
-  };
-
-  return(
-    <div style={{background:"#f0faf4",borderRadius:16,padding:16,marginTop:12,border:"1.5px solid #86efac"}}>
-      <p style={{color:"#166534",fontWeight:800,fontSize:14,marginBottom:4}}>🕐 Organisation Default Shift</p>
-      <p style={{color:"#6b7280",fontSize:12,marginBottom:10}}>All employees will use this shift unless specifically assigned a different one by a manager</p>
-      <select style={{...S.select,marginBottom:10}} value={defShift} onChange={e=>setDefShift(e.target.value)}>
-        <option value="">No default shift</option>
-        {orgShifts.map(s=><option key={s.id} value={s.id}>{s.name} · {s.start_time?.slice(0,5)}–{s.end_time?.slice(0,5)}</option>)}
-      </select>
-      <button style={S.btn} onClick={save}>Save default shift</button>
     </div>
   );
 }
@@ -1510,462 +1342,6 @@ function monthRange() {
   const now=new Date(), y=now.getFullYear(), m=now.getMonth()+1;
   return { from:`${y}-${pad(m)}-01`, to:new Date(y,m,0).toISOString().split("T")[0] };
 }
-// ============================================================
-// SmartAi Attendance — New Admin Screens v5.1
-// Add these to your App.jsx
-// 1. AdminAttendanceTable  — month/day view grid with edit
-// 2. AdminLeaveHistory     — leaves with edit/delete + audit
-// 3. AdminDailyBoard       — who's present/absent/leave today
-// ============================================================
-// HOW TO ADD:
-// 1. Add these 3 nav items to adminNav array:
-//    {k:"adm_att_table", i:"📊", l:"Att. Table"}
-//    {k:"adm_leave_hist", i:"📝", l:"Leaves"}
-//    {k:"adm_daily",     i:"🟢", l:"Daily"}
-// 2. Add to pages object:
-//    adm_att_table: <AdminAttendanceTable user={user} notify={notify} activeOrgId={activeOrgId}/>
-//    adm_leave_hist: <AdminLeaveHistory user={user} notify={notify} activeOrgId={activeOrgId}/>
-//    adm_daily: <AdminDailyBoard notify={notify} activeOrgId={activeOrgId}/>
-// ============================================================
-
-// ── ATTENDANCE TABLE (Month + Day views, inline edit) ─────────────────────
-function AdminAttendanceTable({ user, notify, activeOrgId }) {
-  const [view, setView] = useState("day"); // "day" | "month"
-  const [selDate, setSelDate] = useState(today());
-  const [selEmp, setSelEmp] = useState("all");
-  const [selBranch, setSelBranch] = useState("all");
-  const [selMonth, setSelMonth] = useState(() => {
-    const n = new Date();
-    return `${n.getFullYear()}-${pad(n.getMonth() + 1)}`;
-  });
-  const [employees, setEmployees] = useState([]);
-  const [branches, setBranches] = useState([]);
-  const [records, setRecords] = useState([]);
-  const [leaves, setLeaves] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [editRec, setEditRec] = useState(null); // record being edited
-  const [editForm, setEditForm] = useState({ cin: "", cout: "", notes: "" });
-
-  const load = async () => {
-    setLoading(true);
-    try {
-      const [e, b] = await Promise.all([
-        GET("/api/employees", { org_id: activeOrgId }),
-        GET("/api/branches", { org_id: activeOrgId }),
-      ]);
-      setEmployees(e || []);
-      setBranches(b || []);
-      await loadRecords(e || []);
-    } catch (err) { notify(err.message, "error"); }
-    finally { setLoading(false); }
-  };
-
-  const loadRecords = async (emps) => {
-    try {
-      let from, to;
-      if (view === "day") { from = selDate; to = selDate; }
-      else {
-        const [y, m] = selMonth.split("-").map(Number);
-        from = `${y}-${pad(m)}-01`;
-        to = new Date(y, m, 0).toISOString().split("T")[0];
-      }
-      const empIds = (emps || employees).filter(e => e.role === "employee").map(e => e.id);
-      const [att, lv] = await Promise.all([
-        GET("/api/attendance", { from, to, org_id: activeOrgId }),
-        GET("/api/leaves", { from, to, org_id: activeOrgId }),
-      ]);
-      setRecords(att || []);
-      setLeaves(lv || []);
-    } catch (err) { notify(err.message, "error"); }
-  };
-
-  useEffect(() => { if (activeOrgId) load(); }, [activeOrgId]);
-  useEffect(() => { if (employees.length) loadRecords(); }, [view, selDate, selMonth]);
-
-  const saveEdit = async () => {
-    if (!editRec) return;
-    try {
-      await POST("/api/attendance/admin-mark", {
-        employee_id: editRec.employee_id,
-        date: editRec.date,
-        check_in_time: editForm.cin || null,
-        check_out_time: editForm.cout || null,
-        notes: editForm.notes,
-        org_id: activeOrgId,
-      });
-      notify("Attendance updated ✓");
-      setEditRec(null);
-      loadRecords();
-    } catch (err) { notify(err.message, "error"); }
-  };
-
-  // Status for a given employee + date
-  const getStatus = (empId, date) => {
-    const rec = records.find(r => r.employee_id === empId && r.date === date);
-    const leave = leaves.find(l => l.employee_id === empId && l.date === date);
-    if (leave) return { type: leave.type, label: leave.type === "casual" ? "CL" : leave.type === "unauthorized" ? "UL" : "NS", color: "#7c3aed", bg: "#ede9fe" };
-    if (rec?.check_in_time) {
-      const isLate = rec.is_late;
-      return { type: "present", label: isLate ? `L${rec.late_mins || ""}` : "P", color: isLate ? "#d97706" : "#16a34a", bg: isLate ? "#fef3c7" : "#dcfce7", rec };
-    }
-    return { type: "absent", label: "A", color: "#dc2626", bg: "#fee2e2" };
-  };
-
-  // Get days in selected month
-  const getDaysInMonth = () => {
-    const [y, m] = selMonth.split("-").map(Number);
-    const days = [];
-    const end = new Date(y, m, 0).getDate();
-    for (let d = 1; d <= end; d++) days.push(`${y}-${pad(m)}-${pad(d)}`);
-    return days;
-  };
-
-  let filteredEmps = employees.filter(e => e.role === "employee");
-  if (user.role === "branch_admin") filteredEmps = filteredEmps.filter(e => e.branch_id === user.branch_id);
-  if (selBranch !== "all") filteredEmps = filteredEmps.filter(e => e.branch_id === selBranch);
-  if (selEmp !== "all") filteredEmps = filteredEmps.filter(e => e.id === selEmp);
-
-  // Summary counts for day view
-  const daySummary = {
-    present: filteredEmps.filter(e => getStatus(e.id, selDate).type === "present").length,
-    absent: filteredEmps.filter(e => getStatus(e.id, selDate).type === "absent").length,
-    leave: filteredEmps.filter(e => ["casual", "unauthorized", "noshow"].includes(getStatus(e.id, selDate).type)).length,
-    late: filteredEmps.filter(e => getStatus(e.id, selDate).type === "present" && records.find(r => r.employee_id === e.id && r.date === selDate)?.is_late).length,
-  };
-
-  if (loading) return <Spinner />;
-
-  return (
-    <div style={{ padding: 20 }}>
-      <h2 style={{ color: C.g800, fontSize: 22, fontWeight: 800, marginBottom: 16 }}>Attendance Table</h2>
-
-      {/* View toggle */}
-      <div style={{ background: C.g100, borderRadius: 14, display: "flex", padding: 4, marginBottom: 16 }}>
-        {[["day", "📅 Day View"], ["month", "📊 Month View"]].map(([v, l]) => (
-          <button key={v} onClick={() => setView(v)} style={{ flex: 1, background: view === v ? C.white : "transparent", border: "none", borderRadius: 10, padding: "8px", cursor: "pointer", color: view === v ? C.g700 : C.gr500, fontWeight: 700, fontSize: 13 }}>{l}</button>
-        ))}
-      </div>
-
-      {/* Filters */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
-        {view === "day"
-          ? <input style={{ ...S.input, marginBottom: 0, flex: 1 }} type="date" value={selDate} onChange={e => setSelDate(e.target.value)} />
-          : <input style={{ ...S.input, marginBottom: 0, flex: 1 }} type="month" value={selMonth} onChange={e => setSelMonth(e.target.value)} />
-        }
-        <select style={{ ...S.select, marginBottom: 0, flex: 1 }} value={selBranch} onChange={e => setSelBranch(e.target.value)}>
-          <option value="all">All branches</option>
-          {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-        </select>
-      </div>
-
-      {/* Day view summary */}
-      {view === "day" && (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, marginBottom: 16 }}>
-          {[["Present", daySummary.present, C.g600], ["Absent", daySummary.absent, C.red], ["Leave", daySummary.leave, C.violet], ["Late", daySummary.late, C.amber]].map(([l, v, c]) => (
-            <div key={l} style={{ background: C.white, borderRadius: 14, padding: "12px 8px", textAlign: "center", boxShadow: `0 2px 8px ${C.g300}33` }}>
-              <p style={{ color: c, fontSize: 22, fontWeight: 900 }}>{v}</p>
-              <p style={{ color: C.gr500, fontSize: 11 }}>{l}</p>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Legend */}
-      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
-        {[["P", "Present", "#dcfce7", "#16a34a"], ["A", "Absent", "#fee2e2", "#dc2626"], ["L", "Late", "#fef3c7", "#d97706"], ["CL", "Casual", "#ede9fe", "#7c3aed"], ["UL", "Unauth", "#fee2e2", "#dc2626"], ["NS", "No Show", "#ffedd5", "#ea580c"]].map(([code, label, bg, color]) => (
-          <span key={code} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, color: C.gr500 }}>
-            <span style={{ background: bg, color, fontSize: 11, padding: "2px 6px", borderRadius: 6, fontWeight: 700 }}>{code}</span>{label}
-          </span>
-        ))}
-      </div>
-
-      {/* DAY VIEW — list */}
-      {view === "day" && (
-        <div>
-          {filteredEmps.map(emp => {
-            const st = getStatus(emp.id, selDate);
-            const rec = records.find(r => r.employee_id === emp.id && r.date === selDate);
-            return (
-              <div key={emp.id} style={{ background: C.white, borderRadius: 16, padding: "14px 16px", marginBottom: 10, boxShadow: `0 2px 8px ${C.g300}33`, borderLeft: `4px solid ${st.color}` }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div>
-                    <p style={{ color: C.gr900, fontWeight: 800 }}>{emp.name}</p>
-                    <p style={{ color: C.gr500, fontSize: 12 }}>{emp.designation} · {emp.branch_name}</p>
-                    {rec && (
-                      <p style={{ color: C.gr500, fontSize: 13, marginTop: 4 }}>
-                        ▶ {rec.check_in_time?.slice(0, 5) || "—"} &nbsp; ⏹ {rec.check_out_time?.slice(0, 5) || "—"}
-                        {rec.worked_mins != null && <span> &nbsp; ⏱ {Math.floor(rec.worked_mins / 60)}h {rec.worked_mins % 60}m</span>}
-                      </p>
-                    )}
-                  </div>
-                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
-                    <span style={{ background: st.bg, color: st.color, fontSize: 13, padding: "4px 12px", borderRadius: 20, fontWeight: 700 }}>{st.label}</span>
-                    <button onClick={() => { setEditRec({ employee_id: emp.id, date: selDate, name: emp.name }); setEditForm({ cin: rec?.check_in_time?.slice(0, 5) || "", cout: rec?.check_out_time?.slice(0, 5) || "", notes: rec?.notes || "" }); }}
-                      style={{ ...S.outline, padding: "5px 12px", fontSize: 12 }}>✏️ Edit</button>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-          {filteredEmps.length === 0 && <Empty icon="👥" msg="No employees found" />}
-        </div>
-      )}
-
-      {/* MONTH VIEW — scrollable grid */}
-      {view === "month" && (
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ borderCollapse: "collapse", minWidth: "100%", fontSize: 12 }}>
-            <thead>
-              <tr>
-                <th style={{ background: C.g800, color: C.white, padding: "10px 12px", textAlign: "left", borderRadius: "8px 0 0 0", position: "sticky", left: 0, zIndex: 2, minWidth: 120 }}>Employee</th>
-                {getDaysInMonth().map(ds => {
-                  const d = new Date(ds + "T12:00:00");
-                  const isSun = d.getDay() === 0;
-                  const isToday_ = ds === today();
-                  return (
-                    <th key={ds} style={{ background: isToday_ ? C.g600 : isSun ? "#f3f4f6" : C.g800, color: isToday_ ? C.white : isSun ? C.gr500 : C.white, padding: "8px 6px", textAlign: "center", minWidth: 36, fontSize: 10 }}>
-                      <div>{pad(d.getDate())}</div>
-                      <div style={{ opacity: 0.7 }}>{["S","M","T","W","T","F","S"][d.getDay()]}</div>
-                    </th>
-                  );
-                })}
-                <th style={{ background: C.g800, color: C.white, padding: "10px 8px", textAlign: "center", borderRadius: "0 8px 0 0" }}>Summary</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredEmps.map((emp, ei) => {
-                const days = getDaysInMonth();
-                let pCount = 0, aCount = 0, lCount = 0, lateCount = 0;
-                return (
-                  <tr key={emp.id} style={{ background: ei % 2 === 0 ? C.white : C.g50 }}>
-                    <td style={{ padding: "8px 12px", fontWeight: 700, color: C.gr900, position: "sticky", left: 0, background: ei % 2 === 0 ? C.white : C.g50, zIndex: 1, borderRight: `1px solid ${C.g100}` }}>
-                      <div>{emp.name}</div>
-                      <div style={{ color: C.gr500, fontSize: 10, fontWeight: 400 }}>{emp.branch_name}</div>
-                    </td>
-                    {days.map(ds => {
-                      const st = getStatus(emp.id, ds);
-                      const isSun = new Date(ds + "T12:00:00").getDay() === 0;
-                      if (st.type === "present") { pCount++; if (st.label.startsWith("L")) lateCount++; }
-                      else if (st.type === "absent") aCount++;
-                      else lCount++;
-                      return (
-                        <td key={ds} style={{ padding: "4px 2px", textAlign: "center", background: isSun ? "#f9fafb" : "transparent" }}>
-                          <button onClick={() => { setEditRec({ employee_id: emp.id, date: ds, name: emp.name }); const rec = records.find(r => r.employee_id === emp.id && r.date === ds); setEditForm({ cin: rec?.check_in_time?.slice(0, 5) || "", cout: rec?.check_out_time?.slice(0, 5) || "", notes: rec?.notes || "" }); }}
-                            style={{ background: isSun ? "transparent" : st.bg, color: isSun ? C.gr300 : st.color, border: "none", borderRadius: 6, padding: "3px 4px", fontSize: 10, fontWeight: 700, cursor: isSun ? "default" : "pointer", minWidth: 28 }}>
-                            {isSun ? "—" : st.label}
-                          </button>
-                        </td>
-                      );
-                    })}
-                    <td style={{ padding: "8px", textAlign: "center", fontSize: 11 }}>
-                      <div style={{ color: C.g600, fontWeight: 700 }}>P:{pCount}</div>
-                      <div style={{ color: C.red, fontWeight: 700 }}>A:{aCount}</div>
-                      <div style={{ color: C.amber, fontWeight: 700 }}>L:{lateCount}</div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* Edit modal */}
-      {editRec && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 300 }}>
-          <div style={{ background: C.white, borderRadius: "24px 24px 0 0", padding: 24, width: "100%", maxWidth: 480, animation: "slideUp .3s ease" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-              <div>
-                <p style={{ color: C.g800, fontWeight: 800, fontSize: 17 }}>Edit Attendance</p>
-                <p style={{ color: C.gr500, fontSize: 13 }}>{editRec.name} · {fmtDF(editRec.date)}</p>
-              </div>
-              <button onClick={() => setEditRec(null)} style={S.iconBtn}>✕</button>
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <div><label style={S.label}>Check-in</label><input style={S.input} type="time" value={editForm.cin} onChange={e => setEditForm(f => ({ ...f, cin: e.target.value }))}/></div>
-              <div><label style={S.label}>Check-out</label><input style={S.input} type="time" value={editForm.cout} onChange={e => setEditForm(f => ({ ...f, cout: e.target.value }))}/></div>
-            </div>
-            {editForm.cin && editForm.cout && (
-              <p style={{ color: C.g600, fontSize: 13, marginBottom: 10 }}>
-                ⏱ {Math.floor((toM(editForm.cout) - toM(editForm.cin)) / 60)}h {(toM(editForm.cout) - toM(editForm.cin)) % 60}m
-              </p>
-            )}
-            <label style={S.label}>Notes / reason for edit</label>
-            <input style={S.input} placeholder="e.g. Employee forgot to scan" value={editForm.notes} onChange={e => setEditForm(f => ({ ...f, notes: e.target.value }))}/>
-            <div style={{ display: "flex", gap: 10 }}>
-              <button style={{ ...S.btn, flex: 1 }} onClick={saveEdit}>Save</button>
-              <button onClick={() => setEditRec(null)} style={{ ...S.outline, flex: 1 }}>Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── LEAVE / PENALTY HISTORY (with edit, delete, audit trail) ───────────────
-function AdminLeaveHistory({ user, notify, activeOrgId }) {
-  const [leaves, setLeaves] = useState([]);
-  const [employees, setEmployees] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [selEmp, setSelEmp] = useState("all");
-  const [selType, setSelType] = useState("all");
-  const [selMonth, setSelMonth] = useState(() => { const n = new Date(); return `${n.getFullYear()}-${pad(n.getMonth() + 1)}`; });
-  const [editLeave, setEditLeave] = useState(null);
-  const [editForm, setEditForm] = useState({ type: "", reason: "", date: "" });
-  const [showDeleted, setShowDeleted] = useState(false);
-
-  const load = async () => {
-    setLoading(true);
-    try {
-      const [y, m] = selMonth.split("-").map(Number);
-      const from = `${y}-${pad(m)}-01`;
-      const to = new Date(y, m, 0).toISOString().split("T")[0];
-      const [lv, emps] = await Promise.all([
-        GET("/api/leaves", { from, to, org_id: activeOrgId }),
-        GET("/api/employees", { org_id: activeOrgId }),
-      ]);
-      setLeaves(lv || []);
-      setEmployees(emps || []);
-    } catch (err) { notify(err.message, "error"); }
-    finally { setLoading(false); }
-  };
-
-  useEffect(() => { if (activeOrgId) load(); }, [activeOrgId, selMonth]);
-
-  const deleteLeave = async (lv) => {
-    if (!window.confirm(`Delete this ${lv.type} leave for ${lv.employee_name} on ${fmtD(lv.date)}?`)) return;
-    try {
-      await DEL(`/api/leaves/${lv.id}`);
-      notify("Leave deleted ✓");
-      load();
-    } catch (err) { notify(err.message, "error"); }
-  };
-
-  const saveEdit = async () => {
-    try {
-      await PATCH(`/api/leaves/${editLeave.id}`, editForm);
-      notify("Leave updated ✓");
-      setEditLeave(null);
-      load();
-    } catch (err) { notify(err.message, "error"); }
-  };
-
-  const TYPE_CONFIG = {
-    casual:        { label: "Casual Leave",        color: C.blue,   bg: "#eff6ff" },
-    unauthorized:  { label: "Unauthorized Leave",  color: C.red,    bg: "#fee2e2" },
-    noshow:        { label: "No Show",             color: "#ea580c", bg: "#ffedd5" },
-    sick:          { label: "Sick Leave",          color: C.violet, bg: "#ede9fe" },
-  };
-
-  let list = leaves;
-  if (selEmp !== "all") list = list.filter(l => l.employee_id === selEmp);
-  if (selType !== "all") list = list.filter(l => l.type === selType);
-  list = [...list].sort((a, b) => b.date.localeCompare(a.date));
-
-  // Counts per type
-  const counts = leaves.reduce((acc, l) => { acc[l.type] = (acc[l.type] || 0) + 1; return acc; }, {});
-
-  if (loading) return <Spinner />;
-
-  return (
-    <div style={{ padding: 20 }}>
-      <h2 style={{ color: C.g800, fontSize: 22, fontWeight: 800, marginBottom: 16 }}>Leave & Penalty History</h2>
-
-      {/* Month selector */}
-      <input style={{ ...S.input, marginBottom: 12 }} type="month" value={selMonth} onChange={e => setSelMonth(e.target.value)} />
-
-      {/* Summary badges */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
-        {Object.entries(counts).map(([type, count]) => {
-          const tc = TYPE_CONFIG[type] || { label: type, color: C.gr500, bg: C.g50 };
-          return <span key={type} style={{ background: tc.bg, color: tc.color, fontSize: 12, padding: "4px 12px", borderRadius: 20, fontWeight: 700 }}>{tc.label}: {count}</span>;
-        })}
-      </div>
-
-      {/* Filters */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-        <select style={{ ...S.select, marginBottom: 0, flex: 1, fontSize: 12 }} value={selEmp} onChange={e => setSelEmp(e.target.value)}>
-          <option value="all">All employees</option>
-          {employees.filter(e => e.role === "employee").map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-        </select>
-        <select style={{ ...S.select, marginBottom: 0, flex: 1, fontSize: 12 }} value={selType} onChange={e => setSelType(e.target.value)}>
-          <option value="all">All types</option>
-          {Object.entries(TYPE_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-        </select>
-      </div>
-
-      {/* Leave list */}
-      {list.map(lv => {
-        const tc = TYPE_CONFIG[lv.type] || { label: lv.type, color: C.gr500, bg: C.g50 };
-        return (
-          <div key={lv.id} style={{ background: C.white, borderRadius: 16, padding: "14px 16px", marginBottom: 10, boxShadow: `0 2px 8px ${C.g300}33`, borderLeft: `4px solid ${tc.color}` }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                  <p style={{ color: C.gr900, fontWeight: 800 }}>{lv.employee_name}</p>
-                  <span style={{ background: tc.bg, color: tc.color, fontSize: 11, padding: "2px 8px", borderRadius: 20, fontWeight: 700 }}>{tc.label}</span>
-                </div>
-                <p style={{ color: C.g700, fontWeight: 700, fontSize: 14 }}>📅 {fmtD(lv.date)}</p>
-                {lv.reason && <p style={{ color: C.gr500, fontSize: 13, marginTop: 3 }}>💬 {lv.reason}</p>}
-                {lv.recorded_by_name && <p style={{ color: C.gr500, fontSize: 11, marginTop: 4 }}>Added by {lv.recorded_by_name}</p>}
-                {lv.created_at && <p style={{ color: C.gr500, fontSize: 11 }}>{new Date(lv.created_at).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</p>}
-              </div>
-              <div style={{ display: "flex", gap: 6 }}>
-                <button onClick={() => { setEditLeave(lv); setEditForm({ type: lv.type, reason: lv.reason || "", date: lv.date }); }}
-                  style={{ ...S.outline, padding: "6px 10px", fontSize: 12 }}>✏️</button>
-                <button onClick={() => deleteLeave(lv)}
-                  style={{ ...S.outline, padding: "6px 10px", fontSize: 12, borderColor: C.red, color: C.red }}>🗑</button>
-              </div>
-            </div>
-          </div>
-        );
-      })}
-      {list.length === 0 && <Empty icon="📝" msg="No leave records this month" />}
-
-      {/* Edit modal */}
-      {editLeave && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 300 }}>
-          <div style={{ background: C.white, borderRadius: "24px 24px 0 0", padding: 24, width: "100%", maxWidth: 480, animation: "slideUp .3s ease" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
-              <div>
-                <p style={{ color: C.g800, fontWeight: 800, fontSize: 17 }}>Edit Leave</p>
-                <p style={{ color: C.gr500, fontSize: 13 }}>{editLeave.employee_name}</p>
-              </div>
-              <button onClick={() => setEditLeave(null)} style={S.iconBtn}>✕</button>
-            </div>
-            <label style={S.label}>Leave type</label>
-            <select style={S.select} value={editForm.type} onChange={e => setEditForm(f => ({ ...f, type: e.target.value }))}>
-              {Object.entries(TYPE_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-            </select>
-            <label style={S.label}>Date</label>
-            <input style={S.input} type="date" value={editForm.date} onChange={e => setEditForm(f => ({ ...f, date: e.target.value }))} />
-            <label style={S.label}>Reason</label>
-            <input style={S.input} placeholder="Reason" value={editForm.reason} onChange={e => setEditForm(f => ({ ...f, reason: e.target.value }))} />
-            <div style={{ display: "flex", gap: 10 }}>
-              <button style={{ ...S.btn, flex: 1 }} onClick={saveEdit}>Save changes</button>
-              <button onClick={() => setEditLeave(null)} style={{ ...S.outline, flex: 1 }}>Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ============================================================
-// FIXED AdminAttendanceTable, AdminLeaveHistory, AdminDailyBoard
-// Fixes:
-// 1. Attendance edit correctly changes A→P and shows times
-// 2. Date of joining preserved on staff edit
-// 3. Real-time refresh after edit
-// 4. Check-in/out times showing correctly
-// 5. Manually added attendance shows P not A
-// ============================================================
-
-
-// ── LEAVE HISTORY (full audit) ─────────────────────────────────────────────
-
 
 // ── STYLES ─────────────────────────────────────────────────────────────────
 const S = {
