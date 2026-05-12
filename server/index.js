@@ -828,7 +828,54 @@ app.get('/api/leaves/audit', auth(['super_admin', 'org_admin', 'branch_admin']),
 // SALARY — employee self-service endpoint (with advance deductions + grace slabs)
 // ============================================================
 
-app.get('/ap);
+app.get('/api/my-salary', auth(['employee']), async (req, res) => {
+  try {
+    const now = new Date();
+    const y = parseInt(req.query.year || now.getFullYear());
+    const m = parseInt(req.query.month || (now.getMonth() + 1));
+    const from = `${y}-${pad(m)}-01`;
+    const to = new Date(y, m, 0).toISOString().split('T')[0];
+
+    const [{ rows: settRows }, { rows: att }, { rows: lvs }, { rows: uRows }, { rows: advRows }] = await Promise.all([
+      db('SELECT * FROM org_settings WHERE org_id=$1', [req.user.org_id]),
+      db('SELECT * FROM attendance_records WHERE employee_id=$1 AND date BETWEEN $2 AND $3', [req.user.id, from, to]),
+      db('SELECT * FROM leaves WHERE employee_id=$1 AND date BETWEEN $2 AND $3', [req.user.id, from, to]),
+      db('SELECT salary, working_days_type FROM users WHERE id=$1', [req.user.id]),
+      db(`SELECT COALESCE(SUM(monthly_recovery),0) AS monthly_deduction
+          FROM salary_advances WHERE employee_id=$1 AND status='recovering'`, [req.user.id]),
+    ]);
+
+    const s = settRows[0] || {};
+    const salary = Number(uRows[0]?.salary || 0);
+    const workingDays = uRows[0]?.working_days_type || s.working_days_per_month || 26;
+    const presentDays = att.filter(a => a.check_in_time).length;
+    const lateDays = att.filter(a => a.is_late && a.approval_status !== 'rejected').length;
+    const unauthLeaves = lvs.filter(l => l.type === 'unauthorized').length;
+    const noShows = lvs.filter(l => l.type === 'noshow').length;
+    const casualUsed = lvs.filter(l => l.type === 'casual').length;
+    const dailyRate = salary / workingDays;
+    const earnedGross = presentDays * dailyRate;
+    const monthlyGraceDays = s.monthly_grace_days || 3;
+    const chronicThreshold = s.chronic_late_threshold || 6;
+    const normalLates = Math.max(0, Math.min(lateDays, monthlyGraceDays));
+    const excessLates = Math.max(0, lateDays - monthlyGraceDays);
+    const lateDeductions =
+      normalLates * (s.late_deduction_per_occ || 50) +
+      (excessLates > 0 ? excessLates * (s.excess_late_deduction || 100) : 0) +
+      (lateDays >= chronicThreshold ? excessLates * (s.chronic_late_deduction || 200) : 0);
+    const leaveDeductions = unauthLeaves * (s.unauth_leave_penalty || 200);
+    const noShowDeductions = noShows * (s.no_show_penalty || 250);
+    const advanceDeduction = Number(advRows[0]?.monthly_deduction || 0);
+    const totalDeductions = lateDeductions + leaveDeductions + noShowDeductions + advanceDeduction;
+
+    res.json({
+      salary, workingDays, presentDays, lateDays, casualUsed, unauthLeaves, noShows,
+      normalLates, excessLates, dailyRate, earnedGross,
+      lateDeductions, leaveDeductions, noShowDeductions, advanceDeduction,
+      totalDeductions, netEarned: Math.max(0, earnedGross - totalDeductions),
+    });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
 
 // ============================================================
 // SALARY REPORT
