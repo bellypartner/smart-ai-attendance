@@ -305,13 +305,15 @@ function EmpApp({user, notify, page, setPage, onLogout}) {
   const myBranch = branches.find(b=>b.id===user.branch_id);
   const myBranches = branches.filter(b=>b.org_id===user.org_id);
 
-  const empNav=[{k:"home",i:"🏠",l:"Home"},{k:"shifts",i:"📅",l:"Shifts"},{k:"history",i:"📋",l:"History"},{k:"salary",i:"💰",l:"Salary"},{k:"profile",i:"👤",l:"Profile"}];
+  const empNav=[{k:"home",i:"🏠",l:"Home"},{k:"shifts",i:"📅",l:"Shifts"},{k:"history",i:"📋",l:"History"},{k:"salary",i:"💰",l:"Salary"},{k:"advances",i:"💳",l:"Advance"},{k:"calendar",i:"📅",l:"Calendar"},{k:"profile",i:"👤",l:"Profile"}];
   const pages={
     home: <EmpHome user={user} branch={myBranch} todayAtt={todayAtt} loading={loading} onScan={()=>setShowScanner(true)}/>,
     shifts: <EmpShifts user={user} notify={notify}/>,
     history: <EmpHistory user={user} notify={notify}/>,
     salary: <EmpSalary user={user} notify={notify}/>,
     profile: <EmpProfile user={user} notify={notify}/>,
+    advances: <EmpAdvances user={user} notify={notify}/>,
+    calendar: <AttendanceCalendar user={user} notify={notify} isAdmin={false} activeOrgId={user.org_id}/>,
   };
   return(
     <div style={{display:"flex",flexDirection:"column",height:"100vh",maxWidth:480,margin:"0 auto",background:C.g50}}>
@@ -391,6 +393,7 @@ function EmpShifts({user, notify}) {
   const [requests, setRequests] = useState([]);
   const [tab, setTab] = useState("upcoming");
   const [loading, setLoading] = useState(true);
+  const [defaultShift, setDefaultShift] = useState(null);
   const [reqDate,setReqDate]=useState(""), [reqShift,setReqShift]=useState(""), [reqNote,setReqNote]=useState("");
 
   const load = async () => {
@@ -398,12 +401,20 @@ function EmpShifts({user, notify}) {
       const now = new Date();
       const from = new Date(); from.setDate(from.getDate()-2);
       const to = new Date(); to.setDate(to.getDate()+14);
-      const [sc,sh,rq] = await Promise.all([
+      const [sc,sh,rq,shiftInfo] = await Promise.all([
         GET("/api/schedules",{from:from.toISOString().split("T")[0],to:to.toISOString().split("T")[0],employee_id:user.id}),
         GET("/api/shifts"),
         GET("/api/shift-requests"),
+        GET("/api/my-shift-info"),
       ]);
       setSchedules(sc||[]); setShifts(sh||[]); setRequests(rq||[]);
+      // Store org/employee default shift for fallback display
+      if(shiftInfo?.emp_shift_id||shiftInfo?.org_shift_id) {
+        const defaultSh = shiftInfo.emp_shift_id
+          ? {id:shiftInfo.emp_shift_id,name:shiftInfo.emp_shift_name,start_time:shiftInfo.emp_start,end_time:shiftInfo.emp_end,color:"#3b82f6",source:"employee"}
+          : {id:shiftInfo.org_shift_id,name:shiftInfo.org_shift_name,start_time:shiftInfo.org_start,end_time:shiftInfo.org_end,color:"#16a34a",source:"org"};
+        setDefaultShift(defaultSh);
+      }
     } catch(e){notify(e.message,"error");}
     finally{setLoading(false);}
   };
@@ -430,14 +441,22 @@ function EmpShifts({user, notify}) {
           {pending.length>0&&<div style={{background:"#fffbeb",borderRadius:14,padding:14,marginBottom:14,border:`1px solid #fcd34d`}}><p style={{color:"#d97706",fontWeight:700,fontSize:13}}>⏳ {pending.length} pending request(s)</p></div>}
           {days.map(ds=>{
             const sc=schedules.find(s=>s.date===ds&&s.is_override)||schedules.find(s=>s.date===ds&&!s.is_override);
-            const isToday=ds===today(), isPast=ds<today();
+            // Fallback to employee default shift if no schedule assigned
+            const defShift=!sc?defaultShift:null;
+            const shiftInfo=sc||defShift;
+            const isToday=ds===today();
             return(
-              <div key={ds} style={{background:isToday?`linear-gradient(135deg,${C.g800},${C.g700})`:C.white,borderRadius:16,padding:"14px 16px",marginBottom:10,boxShadow:`0 2px 8px ${C.g300}${isToday?"66":"22"}`,borderLeft:`4px solid ${sc?sc.color||C.g500:C.gr300}`}}>
+              <div key={ds} style={{background:isToday?`linear-gradient(135deg,${C.g800},${C.g700})`:C.white,borderRadius:16,padding:"14px 16px",marginBottom:10,boxShadow:`0 2px 8px ${C.g300}${isToday?"66":"22"}`,borderLeft:`4px solid ${shiftInfo?shiftInfo.color||C.g500:C.gr300}`}}>
                 <div style={{display:"flex",justifyContent:"space-between"}}>
                   <div>
                     <p style={{color:isToday?C.white:C.gr900,fontWeight:800,fontSize:15}}>{fmtD(ds)} {isToday&&"· TODAY"}</p>
-                    <p style={{color:isToday?"rgba(255,255,255,0.7)":C.gr500,fontSize:13}}>{sc?`${sc.shift_name} · ${sc.start_time?.slice(0,5)}–${sc.end_time?.slice(0,5)}`:"No shift assigned"}</p>
+                    <p style={{color:isToday?"rgba(255,255,255,0.7)":C.gr500,fontSize:13}}>
+                      {shiftInfo
+                        ?`${shiftInfo.shift_name||shiftInfo.name||"Shift"} · ${String(shiftInfo.start_time||"").slice(0,5)}–${String(shiftInfo.end_time||"").slice(0,5)}`
+                        :"No shift assigned — contact admin"}
+                    </p>
                     {sc?.is_override&&<span style={{background:"#fef3c7",color:"#d97706",fontSize:10,padding:"2px 8px",borderRadius:20,fontWeight:700}}>OVERRIDE</span>}
+                    {defShift&&!sc&&<span style={{background:C.g100,color:C.g600,fontSize:10,padding:"2px 8px",borderRadius:20,fontWeight:700}}>Default shift</span>}
                   </div>
                 </div>
               </div>
@@ -586,6 +605,9 @@ function AdminApp({user, notify, page, setPage, activeOrgId, setActiveOrgId, onL
     {k:"adm_att_table",i:"📊",l:"Att."},
     {k:"adm_leave_hist",i:"📝",l:"Leaves"},
     {k:"adm_daily",i:"🟢",l:"Daily"},
+    {k:"adm_advances",i:"💳",l:"Advances"},
+    {k:"adm_calendar",i:"🗓",l:"Calendar"},
+    {k:"adm_hierarchy",i:"🏛",l:"Hierarchy"},
   ];
   const pages={
     sa_orgs: <SuperAdminOrgs notify={notify} setActiveOrgId={setActiveOrgId} setPage={setPage} activeOrgId={activeOrgId}/>,
@@ -601,6 +623,9 @@ function AdminApp({user, notify, page, setPage, activeOrgId, setActiveOrgId, onL
     adm_att_table: <AdminAttendanceTable user={user} notify={notify} activeOrgId={activeOrgId}/>,
     adm_leave_hist: <AdminLeaveHistory user={user} notify={notify} activeOrgId={activeOrgId}/>,
     adm_daily: <AdminDailyBoard notify={notify} activeOrgId={activeOrgId}/>,
+    adm_advances: <AdminAdvances user={user} notify={notify} activeOrgId={activeOrgId}/>,
+    adm_calendar: <AttendanceCalendar user={user} notify={notify} isAdmin={true} activeOrgId={activeOrgId}/>,
+    adm_hierarchy: <HierarchyTable notify={notify} activeOrgId={activeOrgId}/>,
   };
   return(
     <div style={{display:"flex",flexDirection:"column",height:"100vh",maxWidth:480,margin:"0 auto",background:C.g50}}>
@@ -888,7 +913,7 @@ function StaffForm({emp, branches, shifts, activeOrgId, user, notify, onSave, on
     name:emp?.name||"",phone:emp?.phone||"",password:"",branch_id:emp?.branch_id||branches[0]?.id||"",
     role:emp?.role||"employee",designation:emp?.designation||"",salary:emp?.salary||"",
     default_shift_id:emp?.default_shift_id||"",manager_id:emp?.manager_id||"",
-    date_of_joining:emp?.date_of_joining||today(),employee_code:emp?.employee_code||"",
+    date_of_joining:emp?.date_of_joining?String(emp.date_of_joining).split('T')[0]:today(),employee_code:emp?.employee_code||"",
   });
   const set=(k,v)=>setF(p=>({...p,[k]:v}));
   return(
@@ -2037,6 +2062,682 @@ function AdminDailyBoard({ notify, activeOrgId }) {
         );
       })}
       {currentList.length === 0 && <div style={{ textAlign: "center", padding: "50px 20px" }}><p style={{ fontSize: 42, marginBottom: 12 }}>✅</p><p style={{ color: "#6b7280" }}>No employees in {tab} category</p></div>}
+    </div>
+  );
+}
+
+
+function EmpAdvances({ user, notify }) {
+  const [advances, setAdvances] = useState([]);
+  const [settings, setSettings] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ amount: "", reason: "", needed_by_date: "", is_emergency: false });
+  const f = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  const load = async () => {
+    try {
+      const [adv, sett] = await Promise.all([
+        GET("/api/advances"),
+        GET(`/api/orgs/${user.org_id}/settings`),
+      ]);
+      setAdvances(adv || []);
+      setSettings(sett || {});
+    } catch (e) { notify(e.message, "error"); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, []);
+
+  const noticeDays = settings.advance_notice_days || 5;
+  const maxAmount = settings.max_advance_amount || 10000;
+
+  // Check if request date is within 5 days notice
+  const isWithinNotice = form.needed_by_date
+    ? (new Date(form.needed_by_date) - new Date()) / (1000 * 60 * 60 * 24) < noticeDays
+    : false;
+
+  const submit = async () => {
+    if (!form.amount || !form.reason) { notify("Amount and reason required", "error"); return; }
+    if (Number(form.amount) > maxAmount) { notify(`Max advance is ${fmt(maxAmount)}`, "error"); return; }
+    if (isWithinNotice && !form.is_emergency) {
+      notify(`Advances must be requested ${noticeDays} days in advance. Mark as emergency if urgent.`, "warn");
+      return;
+    }
+    try {
+      await POST("/api/advances", { ...form, amount: Number(form.amount), org_id: user.org_id });
+      notify("Advance request submitted ✓");
+      setShowForm(false);
+      setForm({ amount: "", reason: "", needed_by_date: "", is_emergency: false });
+      load();
+    } catch (e) { notify(e.message, "error"); }
+  };
+
+  const STATUS_COLORS = {
+    pending:    { color: "#d97706", bg: "#fef3c7", label: "Pending" },
+    approved:   { color: "#16a34a", bg: "#dcfce7", label: "Approved" },
+    rejected:   { color: "#dc2626", bg: "#fee2e2", label: "Rejected" },
+    paid:       { color: "#7c3aed", bg: "#ede9fe", label: "Paid" },
+    recovering: { color: "#3b82f6", bg: "#eff6ff", label: "Recovering" },
+    recovered:  { color: "#6b7280", bg: "#f3f4f6", label: "Recovered" },
+  };
+
+  const totalPending = advances.filter(a => ["approved","paid","recovering"].includes(a.status))
+    .reduce((s, a) => s + (Number(a.amount) - Number(a.recovered_amount || 0)), 0);
+
+  if (loading) return <Spinner />;
+
+  return (
+    <div style={{ padding: 20 }}>
+      <h2 style={{ color: C.g800, fontSize: 22, fontWeight: 800, marginBottom: 4 }}>Salary Advances</h2>
+
+      {/* Policy notice */}
+      <div style={{ background: "#fffbeb", border: "1px solid #fcd34d", borderRadius: 14, padding: 14, marginBottom: 16 }}>
+        <p style={{ color: "#92400e", fontWeight: 700, fontSize: 13, marginBottom: 4 }}>📋 Advance Policy</p>
+        <p style={{ color: "#78350f", fontSize: 12, lineHeight: 1.6 }}>
+          • Requests must be made <strong>{noticeDays} days in advance</strong><br />
+          • Maximum advance: <strong>{fmt(maxAmount)}</strong><br />
+          • Emergency requests can be made anytime — mark as emergency<br />
+          • Amount deducted from salary over agreed months
+        </p>
+      </div>
+
+      {/* Balance summary */}
+      {totalPending > 0 && (
+        <div style={{ background: `linear-gradient(135deg,${C.g800},${C.g600})`, borderRadius: 18, padding: 18, marginBottom: 16 }}>
+          <p style={{ color: "rgba(255,255,255,0.65)", fontSize: 12 }}>Outstanding advance balance</p>
+          <p style={{ color: C.white, fontSize: 28, fontWeight: 900 }}>{fmt(totalPending)}</p>
+          <p style={{ color: "rgba(255,255,255,0.6)", fontSize: 12 }}>Being recovered from your salary</p>
+        </div>
+      )}
+
+      <button onClick={() => setShowForm(!showForm)}
+        style={{ ...S.btn, marginBottom: 16, background: showForm ? C.gr500 : `linear-gradient(135deg,${C.g700},${C.g500})` }}>
+        {showForm ? "Cancel" : "+ Request Salary Advance"}
+      </button>
+
+      {/* Request form */}
+      {showForm && (
+        <div style={{ background: C.white, borderRadius: 20, padding: 20, marginBottom: 16, boxShadow: `0 2px 12px ${C.g300}44` }}>
+          <p style={{ color: C.g800, fontWeight: 800, fontSize: 15, marginBottom: 14 }}>New advance request</p>
+
+          <label style={S.label}>Amount needed (₹)</label>
+          <input style={S.input} type="number" placeholder={`Max ${fmt(maxAmount)}`} value={form.amount} onChange={e => f("amount", e.target.value)} />
+
+          <label style={S.label}>Reason for advance</label>
+          <input style={S.input} placeholder="Explain why you need this advance" value={form.reason} onChange={e => f("reason", e.target.value)} />
+
+          <label style={S.label}>Needed by date</label>
+          <input style={S.input} type="date" value={form.needed_by_date} onChange={e => f("needed_by_date", e.target.value)} />
+
+          {isWithinNotice && (
+            <div style={{ background: "#fee2e2", borderRadius: 12, padding: 12, marginBottom: 12 }}>
+              <p style={{ color: "#dc2626", fontWeight: 700, fontSize: 13 }}>
+                ⚠ This date is within {noticeDays} days. Mark as emergency if urgent.
+              </p>
+            </div>
+          )}
+
+          <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", marginBottom: 16 }}>
+            <input type="checkbox" checked={form.is_emergency} onChange={e => f("is_emergency", e.target.checked)}
+              style={{ accentColor: C.red, width: 18, height: 18 }} />
+            <div>
+              <span style={{ color: C.red, fontWeight: 700, fontSize: 14 }}>🚨 Emergency request</span>
+              <p style={{ color: C.gr500, fontSize: 12 }}>For urgent situations — will go directly to org admin</p>
+            </div>
+          </label>
+
+          <button style={S.btn} onClick={submit}>Submit request</button>
+        </div>
+      )}
+
+      {/* Advance history */}
+      <h3 style={{ color: C.g800, fontWeight: 800, fontSize: 15, marginBottom: 12 }}>My advance history</h3>
+      {advances.map(adv => {
+        const sc = STATUS_COLORS[adv.status] || STATUS_COLORS.pending;
+        const balance = Number(adv.amount) - Number(adv.recovered_amount || 0);
+        return (
+          <div key={adv.id} style={{ background: C.white, borderRadius: 18, padding: 16, marginBottom: 12, boxShadow: `0 2px 8px ${C.g300}33`, borderLeft: `4px solid ${sc.color}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+              <div>
+                <p style={{ color: C.gr900, fontWeight: 800, fontSize: 16 }}>{fmt(adv.amount)}</p>
+                <p style={{ color: C.gr500, fontSize: 12 }}>Requested {fmtD(adv.requested_date)}</p>
+              </div>
+              <div style={{ display: "flex", gap: 6, flexDirection: "column", alignItems: "flex-end" }}>
+                <span style={{ background: sc.bg, color: sc.color, fontSize: 12, padding: "3px 10px", borderRadius: 20, fontWeight: 700 }}>{sc.label}</span>
+                {adv.is_emergency && <span style={{ background: "#fee2e2", color: "#dc2626", fontSize: 10, padding: "2px 8px", borderRadius: 20, fontWeight: 700 }}>🚨 Emergency</span>}
+              </div>
+            </div>
+            <p style={{ color: C.gr700, fontSize: 13, marginBottom: 4 }}>💬 {adv.reason}</p>
+            {adv.payment_date && <p style={{ color: C.g600, fontSize: 12 }}>✅ Paid on {fmtD(adv.payment_date)} via {adv.bank_used || "—"}</p>}
+            {adv.rejected_reason && <p style={{ color: C.red, fontSize: 12 }}>❌ {adv.rejected_reason}</p>}
+            {["recovering", "paid"].includes(adv.status) && (
+              <div style={{ background: C.g50, borderRadius: 10, padding: 10, marginTop: 8 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                  <span style={{ color: C.gr500, fontSize: 12 }}>Recovered</span>
+                  <span style={{ color: C.g600, fontWeight: 700, fontSize: 12 }}>{fmt(adv.recovered_amount || 0)}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <span style={{ color: C.gr500, fontSize: 12 }}>Balance</span>
+                  <span style={{ color: balance > 0 ? C.red : C.g600, fontWeight: 700, fontSize: 12 }}>{fmt(balance)}</span>
+                </div>
+                <div style={{ background: C.g200, borderRadius: 6, height: 5, marginTop: 8 }}>
+                  <div style={{ background: C.g600, height: 5, borderRadius: 6, width: `${Math.min(100, ((Number(adv.recovered_amount) / Number(adv.amount)) * 100))}%` }} />
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+      {advances.length === 0 && <Empty icon="💰" msg="No advance requests yet" />}
+    </div>
+  );
+}
+
+// ── ADMIN ADVANCES ────────────────────────────────────────────
+function AdminAdvances({ user, notify, activeOrgId }) {
+  const [advances, setAdvances] = useState([]);
+  const [employees, setEmployees] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState("pending");
+  const [payModal, setPayModal] = useState(null);
+  const [payForm, setPayForm] = useState({ payment_date: today(), payment_notes: "", bank_used: "", recovery_months: 1 });
+  const [rejectModal, setRejectModal] = useState(null);
+  const [rejectReason, setRejectReason] = useState("");
+  // Manual payment recording
+  const [showManual, setShowManual] = useState(false);
+  const [manForm, setManForm] = useState({ employee_id: "", amount: "", reason: "", payment_date: today(), payment_notes: "", bank_used: "", is_emergency: true, recovery_months: 1 });
+  const mf = (k, v) => setManForm(p => ({ ...p, [k]: v }));
+
+  const BANKS = ["Cash", "SBI", "HDFC", "ICICI", "Axis", "Kotak", "Bank of Baroda", "Canara Bank", "PNB", "Other"];
+
+  const STATUS_COLORS = {
+    pending:    { color: "#d97706", bg: "#fef3c7", label: "Pending" },
+    approved:   { color: "#16a34a", bg: "#dcfce7", label: "Approved" },
+    rejected:   { color: "#dc2626", bg: "#fee2e2", label: "Rejected" },
+    paid:       { color: "#7c3aed", bg: "#ede9fe", label: "Paid" },
+    recovering: { color: "#3b82f6", bg: "#eff6ff", label: "Recovering" },
+    recovered:  { color: "#6b7280", bg: "#f3f4f6", label: "Recovered" },
+  };
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const [adv, emps] = await Promise.all([
+        GET("/api/advances", { org_id: activeOrgId }),
+        GET("/api/employees", { org_id: activeOrgId }),
+      ]);
+      setAdvances(adv || []);
+      setEmployees((emps || []).filter(e => e.role === "employee"));
+    } catch (e) { notify(e.message, "error"); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { if (activeOrgId) load(); }, [activeOrgId]);
+
+  const approve = async (adv) => {
+    try {
+      await PATCH(`/api/advances/${adv.id}`, { status: "approved" });
+      notify("Advance approved ✓"); load();
+    } catch (e) { notify(e.message, "error"); }
+  };
+
+  const reject = async () => {
+    try {
+      await PATCH(`/api/advances/${rejectModal.id}`, { status: "rejected", rejected_reason: rejectReason });
+      notify("Advance rejected"); setRejectModal(null); setRejectReason(""); load();
+    } catch (e) { notify(e.message, "error"); }
+  };
+
+  const recordPayment = async () => {
+    try {
+      await PATCH(`/api/advances/${payModal.id}`, {
+        status: "recovering",
+        payment_date: payForm.payment_date,
+        payment_notes: payForm.payment_notes,
+        bank_used: payForm.bank_used,
+        recovery_months: Number(payForm.recovery_months),
+        monthly_recovery: Number(payModal.amount) / Number(payForm.recovery_months),
+      });
+      notify("Payment recorded ✓"); setPayModal(null); load();
+    } catch (e) { notify(e.message, "error"); }
+  };
+
+  const recordManual = async () => {
+    if (!manForm.employee_id || !manForm.amount) { notify("Employee and amount required", "error"); return; }
+    try {
+      await POST("/api/advances/manual", { ...manForm, amount: Number(manForm.amount), org_id: activeOrgId, status: "recovering", recorded_by: user.id });
+      notify("Payment recorded ✓"); setShowManual(false); setManForm({ employee_id: "", amount: "", reason: "", payment_date: today(), payment_notes: "", bank_used: "", is_emergency: true, recovery_months: 1 });
+      load();
+    } catch (e) { notify(e.message, "error"); }
+  };
+
+  const tabs = ["pending", "approved", "recovering", "all"];
+  const filtered = tab === "all" ? advances : advances.filter(a => a.status === tab);
+  const pendingCount = advances.filter(a => a.status === "pending").length;
+  const totalOutstanding = advances.filter(a => ["recovering", "paid", "approved"].includes(a.status))
+    .reduce((s, a) => s + Math.max(0, Number(a.amount) - Number(a.recovered_amount || 0)), 0);
+
+  if (loading) return <Spinner />;
+
+  return (
+    <div style={{ padding: 20 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <h2 style={{ color: C.g800, fontSize: 22, fontWeight: 800 }}>Salary Advances</h2>
+        <button onClick={() => setShowManual(!showManual)}
+          style={{ ...S.btn, width: "auto", padding: "8px 14px", fontSize: 12, background: showManual ? C.gr500 : C.violet }}>
+          {showManual ? "Cancel" : "+ Record Payment"}
+        </button>
+      </div>
+
+      {/* Summary */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
+        <div style={{ background: C.amber + "20", border: `1px solid ${C.amber}`, borderRadius: 16, padding: 14 }}>
+          <p style={{ color: C.amber, fontWeight: 900, fontSize: 22 }}>{pendingCount}</p>
+          <p style={{ color: C.gr500, fontSize: 12 }}>Pending approval</p>
+        </div>
+        <div style={{ background: C.red + "15", border: `1px solid ${C.red}`, borderRadius: 16, padding: 14 }}>
+          <p style={{ color: C.red, fontWeight: 900, fontSize: 18 }}>{fmt(totalOutstanding)}</p>
+          <p style={{ color: C.gr500, fontSize: 12 }}>Total outstanding</p>
+        </div>
+      </div>
+
+      {/* Manual payment recording */}
+      {showManual && (
+        <div style={{ background: "#ede9fe", border: `1px solid ${C.violet}`, borderRadius: 20, padding: 20, marginBottom: 16 }}>
+          <p style={{ color: C.violet, fontWeight: 800, fontSize: 15, marginBottom: 4 }}>Record a cash/bank payment given</p>
+          <p style={{ color: "#7c3aed99", fontSize: 12, marginBottom: 14 }}>Use this when you gave money directly without a prior request</p>
+
+          <label style={S.label}>Employee</label>
+          <select style={S.select} value={manForm.employee_id} onChange={e => mf("employee_id", e.target.value)}>
+            <option value="">Select employee</option>
+            {employees.map(e => <option key={e.id} value={e.id}>{e.name} — {e.branch_name}</option>)}
+          </select>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div><label style={S.label}>Amount (₹)</label><input style={S.input} type="number" placeholder="Amount" value={manForm.amount} onChange={e => mf("amount", e.target.value)} /></div>
+            <div><label style={S.label}>Payment date</label><input style={S.input} type="date" value={manForm.payment_date} onChange={e => mf("payment_date", e.target.value)} /></div>
+          </div>
+
+          <label style={S.label}>Bank / payment method</label>
+          <select style={S.select} value={manForm.bank_used} onChange={e => mf("bank_used", e.target.value)}>
+            <option value="">Select bank / method</option>
+            {BANKS.map(b => <option key={b} value={b}>{b}</option>)}
+          </select>
+
+          <label style={S.label}>Reason / notes</label>
+          <input style={S.input} placeholder="Reason for advance" value={manForm.reason} onChange={e => mf("reason", e.target.value)} />
+
+          <input style={S.input} placeholder="Additional notes" value={manForm.payment_notes} onChange={e => mf("payment_notes", e.target.value)} />
+
+          <label style={S.label}>Recover over (months)</label>
+          <select style={S.select} value={manForm.recovery_months} onChange={e => mf("recovery_months", e.target.value)}>
+            {[1,2,3,4,5,6].map(n => <option key={n} value={n}>{n} month{n > 1 ? "s" : ""} — {manForm.amount ? fmt(Number(manForm.amount) / n) : "₹—"}/month</option>)}
+          </select>
+
+          <button style={S.btn} onClick={recordManual}>Record payment</button>
+        </div>
+      )}
+
+      {/* Tabs */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto" }}>
+        {tabs.map(t => (
+          <button key={t} onClick={() => setTab(t)}
+            style={{ background: tab === t ? C.g600 : C.g100, border: "none", borderRadius: 20, padding: "7px 14px", cursor: "pointer", color: tab === t ? C.white : C.gr500, fontWeight: 700, fontSize: 12, whiteSpace: "nowrap", textTransform: "capitalize" }}>
+            {t === "pending" ? `⏳ Pending (${pendingCount})` : t === "recovering" ? "🔄 Recovering" : t === "all" ? "📋 All" : "✅ Approved"}
+          </button>
+        ))}
+      </div>
+
+      {filtered.map(adv => {
+        const sc = STATUS_COLORS[adv.status] || STATUS_COLORS.pending;
+        const balance = Number(adv.amount) - Number(adv.recovered_amount || 0);
+        const empName = employees.find(e => e.id === adv.employee_id)?.name || adv.employee_name || "—";
+        return (
+          <div key={adv.id} style={{ background: C.white, borderRadius: 18, padding: 16, marginBottom: 14, boxShadow: `0 2px 10px ${C.g300}44`, borderLeft: `4px solid ${sc.color}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <p style={{ color: C.gr900, fontWeight: 800, fontSize: 15 }}>{empName}</p>
+                  {adv.is_emergency && <span style={{ background: "#fee2e2", color: C.red, fontSize: 10, padding: "2px 7px", borderRadius: 20, fontWeight: 700 }}>🚨 Emergency</span>}
+                </div>
+                <p style={{ color: C.gr500, fontSize: 12 }}>Requested {fmtD(adv.requested_date)}</p>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <p style={{ color: C.gr900, fontWeight: 900, fontSize: 18 }}>{fmt(adv.amount)}</p>
+                <span style={{ background: sc.bg, color: sc.color, fontSize: 11, padding: "2px 9px", borderRadius: 20, fontWeight: 700 }}>{sc.label}</span>
+              </div>
+            </div>
+
+            <p style={{ color: C.gr700, fontSize: 13, marginBottom: 8 }}>💬 {adv.reason}</p>
+            {adv.needed_by_date && <p style={{ color: C.gr500, fontSize: 12, marginBottom: 6 }}>📅 Needed by: {fmtDF(adv.needed_by_date)}</p>}
+            {adv.payment_date && (
+              <div style={{ background: "#f0fdf4", borderRadius: 10, padding: 10, marginBottom: 10 }}>
+                <p style={{ color: C.g700, fontSize: 12, fontWeight: 700 }}>✅ Paid {fmtD(adv.payment_date)} via {adv.bank_used || "—"}</p>
+                {adv.payment_notes && <p style={{ color: C.gr500, fontSize: 12 }}>{adv.payment_notes}</p>}
+                <p style={{ color: C.g600, fontSize: 12 }}>Recovery: {fmt(adv.monthly_recovery || 0)}/month × {adv.recovery_months} months</p>
+              </div>
+            )}
+
+            {["recovering", "paid"].includes(adv.status) && (
+              <div style={{ background: C.g50, borderRadius: 10, padding: 10, marginBottom: 10 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                  <span style={{ color: C.gr500, fontSize: 12 }}>Recovered: {fmt(adv.recovered_amount || 0)}</span>
+                  <span style={{ color: balance > 0 ? C.red : C.g600, fontWeight: 700, fontSize: 12 }}>Balance: {fmt(balance)}</span>
+                </div>
+                <div style={{ background: C.g200, borderRadius: 6, height: 6 }}>
+                  <div style={{ background: C.g600, height: 6, borderRadius: 6, width: `${Math.min(100, (Number(adv.recovered_amount) / Number(adv.amount)) * 100)}%` }} />
+                </div>
+              </div>
+            )}
+
+            {adv.status === "pending" && (
+              <div style={{ display: "flex", gap: 8 }}>
+                <button style={{ ...S.btn, flex: 1, background: C.g600, padding: "10px" }} onClick={() => approve(adv)}>✓ Approve</button>
+                <button style={{ ...S.btn, flex: 1, background: C.red, padding: "10px" }} onClick={() => { setRejectModal(adv); setRejectReason(""); }}>✕ Reject</button>
+              </div>
+            )}
+            {adv.status === "approved" && (
+              <button style={{ ...S.btn, background: C.violet, padding: "10px" }} onClick={() => { setPayModal(adv); setPayForm({ payment_date: today(), payment_notes: "", bank_used: "", recovery_months: 1 }); }}>
+                💳 Record Payment
+              </button>
+            )}
+            {(user.role === "super_admin" || user.role === "org_admin") && adv.status === "recovering" && (
+              <button style={{ ...S.outline, width: "100%", marginTop: 8 }} onClick={() => { setPayModal(adv); setPayForm({ payment_date: today(), payment_notes: "", bank_used: adv.bank_used || "", recovery_months: adv.recovery_months || 1 }); }}>
+                ✏️ Edit payment details
+              </button>
+            )}
+          </div>
+        );
+      })}
+      {filtered.length === 0 && <Empty icon="💰" msg="No advances in this category" />}
+
+      {/* Payment modal */}
+      {payModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 300 }}>
+          <div style={{ background: C.white, borderRadius: "24px 24px 0 0", padding: 24, width: "100%", maxWidth: 480, animation: "slideUp .3s ease" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
+              <div>
+                <p style={{ color: C.g800, fontWeight: 800, fontSize: 17 }}>Record Payment</p>
+                <p style={{ color: C.gr500, fontSize: 13 }}>{fmt(payModal.amount)} advance</p>
+              </div>
+              <button onClick={() => setPayModal(null)} style={S.iconBtn}>✕</button>
+            </div>
+
+            <label style={S.label}>Payment date</label>
+            <input style={S.input} type="date" value={payForm.payment_date} onChange={e => setPayForm(f => ({ ...f, payment_date: e.target.value }))} />
+
+            <label style={S.label}>Bank / payment method</label>
+            <select style={S.select} value={payForm.bank_used} onChange={e => setPayForm(f => ({ ...f, bank_used: e.target.value }))}>
+              <option value="">Select bank / method</option>
+              {BANKS.map(b => <option key={b} value={b}>{b}</option>)}
+            </select>
+
+            <label style={S.label}>Recovery period</label>
+            <select style={S.select} value={payForm.recovery_months} onChange={e => setPayForm(f => ({ ...f, recovery_months: e.target.value }))}>
+              {[1,2,3,4,5,6].map(n => <option key={n} value={n}>{n} month{n > 1 ? "s" : ""} — {fmt(Number(payModal.amount) / n)}/month</option>)}
+            </select>
+
+            <label style={S.label}>Notes</label>
+            <input style={S.input} placeholder="Any additional notes" value={payForm.payment_notes} onChange={e => setPayForm(f => ({ ...f, payment_notes: e.target.value }))} />
+
+            <button style={S.btn} onClick={recordPayment}>Save payment record</button>
+          </div>
+        </div>
+      )}
+
+      {/* Reject modal */}
+      {rejectModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 300 }}>
+          <div style={{ background: C.white, borderRadius: "24px 24px 0 0", padding: 24, width: "100%", maxWidth: 480, animation: "slideUp .3s ease" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
+              <p style={{ color: C.g800, fontWeight: 800, fontSize: 17 }}>Reject advance</p>
+              <button onClick={() => setRejectModal(null)} style={S.iconBtn}>✕</button>
+            </div>
+            <label style={S.label}>Reason for rejection</label>
+            <input style={S.input} placeholder="Explain why this is being rejected" value={rejectReason} onChange={e => setRejectReason(e.target.value)} />
+            <button style={{ ...S.btn, background: C.red }} onClick={reject}>Reject advance</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── ATTENDANCE CALENDAR ───────────────────────────────────────
+function AttendanceCalendar({ user, notify, isAdmin, activeOrgId }) {
+  const [selMonth, setSelMonth] = useState(() => { const n = new Date(); return `${n.getFullYear()}-${pad(n.getMonth() + 1)}`; });
+  const [selEmp, setSelEmp] = useState(isAdmin ? "" : user.id);
+  const [employees, setEmployees] = useState([]);
+  const [records, setRecords] = useState([]);
+  const [leaves, setLeaves] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (isAdmin) {
+      GET("/api/employees", { org_id: activeOrgId || user.org_id })
+        .then(e => setEmployees((e || []).filter(x => x.role === "employee")))
+        .catch(() => {});
+    }
+  }, [activeOrgId]);
+
+  useEffect(() => {
+    if (!selEmp) return;
+    setLoading(true);
+    const [y, m] = selMonth.split("-").map(Number);
+    const from = `${y}-${pad(m)}-01`;
+    const to = new Date(y, m, 0).toISOString().split("T")[0];
+    Promise.all([
+      GET("/api/attendance", { from, to, employee_id: selEmp, org_id: activeOrgId || user.org_id }),
+      GET("/api/leaves", { from, to, employee_id: selEmp, org_id: activeOrgId || user.org_id }),
+    ]).then(([att, lv]) => { setRecords(att || []); setLeaves(lv || []); })
+      .catch(e => notify(e.message, "error"))
+      .finally(() => setLoading(false));
+  }, [selEmp, selMonth]);
+
+  const [y, m] = selMonth.split("-").map(Number);
+  const firstDay = new Date(y, m - 1, 1).getDay();
+  const daysInMonth = new Date(y, m, 0).getDate();
+
+  const getDayStatus = (day) => {
+    const ds = `${y}-${pad(m)}-${pad(day)}`;
+    const d = new Date(ds + "T12:00:00");
+    if (d.getDay() === 0) return "sunday";
+    const leave = leaves.find(l => String(l.date).split("T")[0] === ds);
+    if (leave) return leave.type === "casual" ? "casual" : leave.type === "unauthorized" ? "unauthorized" : "leave";
+    const rec = records.find(r => String(r.date).split("T")[0] === ds && r.check_in_time);
+    if (rec) return rec.is_late ? "late" : "present";
+    if (d <= new Date()) return "absent";
+    return "future";
+  };
+
+  const DAY_STYLES = {
+    present:      { bg: "#dcfce7", color: "#15803d", border: "#86efac", label: "P" },
+    late:         { bg: "#fef3c7", color: "#d97706", border: "#fcd34d", label: "L" },
+    absent:       { bg: "#fee2e2", color: "#dc2626", border: "#fca5a5", label: "A" },
+    casual:       { bg: "#ede9fe", color: "#7c3aed", border: "#c4b5fd", label: "CL" },
+    unauthorized: { bg: "#fee2e2", color: "#dc2626", border: "#fca5a5", label: "UL" },
+    leave:        { bg: "#f3f4f6", color: "#6b7280", border: "#d1d5db", label: "L" },
+    sunday:       { bg: "#f9fafb", color: "#d1d5db", border: "#e5e7eb", label: "—" },
+    future:       { bg: "#fff", color: "#d1d5db", border: "#f3f4f6", label: "" },
+  };
+
+  // Summary counts
+  const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
+  const counts = days.reduce((acc, d) => {
+    const st = getDayStatus(d);
+    acc[st] = (acc[st] || 0) + 1;
+    return acc;
+  }, {});
+
+  const empName = isAdmin
+    ? employees.find(e => e.id === selEmp)?.name || "Employee"
+    : user.name;
+
+  return (
+    <div style={{ padding: 20 }}>
+      <h2 style={{ color: C.g800, fontSize: 22, fontWeight: 800, marginBottom: 16 }}>Attendance Calendar</h2>
+
+      <input style={{ ...S.input, marginBottom: 10 }} type="month" value={selMonth} onChange={e => setSelMonth(e.target.value)} />
+
+      {isAdmin && (
+        <select style={{ ...S.select, marginBottom: 14 }} value={selEmp} onChange={e => setSelEmp(e.target.value)}>
+          <option value="">Select employee</option>
+          {employees.map(e => <option key={e.id} value={e.id}>{e.name} — {e.branch_name}</option>)}
+        </select>
+      )}
+
+      {/* Legend */}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
+        {Object.entries(DAY_STYLES).filter(([k]) => !["future"].includes(k)).map(([k, v]) => (
+          <span key={k} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: C.gr500 }}>
+            <span style={{ width: 14, height: 14, background: v.bg, border: `1px solid ${v.border}`, borderRadius: 3, display: "inline-block" }} />{v.label === "P" ? "Present" : v.label === "L" && k === "late" ? "Late" : v.label === "A" ? "Absent" : v.label === "CL" ? "Casual" : v.label === "UL" ? "Unauth" : v.label === "—" ? "Sunday" : "Leave"}
+          </span>
+        ))}
+      </div>
+
+      {/* Summary row */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8, marginBottom: 16 }}>
+        {[["Present", (counts.present || 0) + (counts.late || 0), "#16a34a"],
+          ["Late", counts.late || 0, "#d97706"],
+          ["Absent", counts.absent || 0, "#dc2626"],
+          ["Leave", (counts.casual || 0) + (counts.unauthorized || 0) + (counts.leave || 0), "#7c3aed"]
+        ].map(([l, v, c]) => (
+          <div key={l} style={{ background: C.white, borderRadius: 12, padding: "10px 6px", textAlign: "center", boxShadow: `0 2px 6px ${C.g300}33` }}>
+            <p style={{ color: c, fontSize: 20, fontWeight: 900 }}>{v}</p>
+            <p style={{ color: C.gr500, fontSize: 10 }}>{l}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Calendar grid */}
+      {(!selEmp && isAdmin) ? (
+        <div style={{ textAlign: "center", padding: "40px 20px", color: C.gr500 }}>Select an employee to view their calendar</div>
+      ) : loading ? <Spinner /> : (
+        <div style={{ background: C.white, borderRadius: 20, padding: 16, boxShadow: `0 2px 12px ${C.g300}44` }}>
+          <p style={{ color: C.g800, fontWeight: 800, marginBottom: 12, textAlign: "center" }}>
+            {empName} — {new Date(y, m - 1).toLocaleDateString("en-IN", { month: "long", year: "numeric" })}
+          </p>
+          {/* Day headers */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 3, marginBottom: 4 }}>
+            {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(d => (
+              <div key={d} style={{ textAlign: "center", fontSize: 10, color: d === "Sun" ? C.red : C.gr500, fontWeight: 700, padding: "4px 0" }}>{d}</div>
+            ))}
+          </div>
+          {/* Calendar cells */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 3 }}>
+            {/* Empty cells for first week offset */}
+            {Array.from({ length: firstDay }, (_, i) => <div key={`e${i}`} />)}
+            {days.map(day => {
+              const st = getDayStatus(day);
+              const ds = DAY_STYLES[st] || DAY_STYLES.future;
+              const rec = records.find(r => String(r.date).split("T")[0] === `${y}-${pad(m)}-${pad(day)}`);
+              const isToday = day === new Date().getDate() && m === new Date().getMonth() + 1 && y === new Date().getFullYear();
+              return (
+                <div key={day} title={rec ? `In: ${String(rec.check_in_time || "").slice(0, 5)} Out: ${String(rec.check_out_time || "").slice(0, 5)}` : ""}
+                  style={{ background: ds.bg, border: `1.5px solid ${isToday ? C.g600 : ds.border}`, borderRadius: 8, padding: "6px 2px", textAlign: "center", cursor: rec ? "pointer" : "default", position: "relative" }}>
+                  <div style={{ fontSize: 11, color: C.gr500, marginBottom: 2 }}>{day}</div>
+                  <div style={{ fontSize: 9, color: ds.color, fontWeight: 700 }}>{ds.label}</div>
+                  {isToday && <div style={{ position: "absolute", top: 2, right: 2, width: 5, height: 5, background: C.g600, borderRadius: "50%" }} />}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── HIERARCHY TABLE ───────────────────────────────────────────
+function HierarchyTable({ notify, activeOrgId }) {
+  const [employees, setEmployees] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(null);
+  const [newManager, setNewManager] = useState("");
+
+  useEffect(() => {
+    if (!activeOrgId) return;
+    GET("/api/employees", { org_id: activeOrgId })
+      .then(e => setEmployees(e || []))
+      .catch(err => notify(err.message, "error"))
+      .finally(() => setLoading(false));
+  }, [activeOrgId]);
+
+  const saveManager = async (empId) => {
+    try {
+      await PATCH(`/api/employees/${empId}`, { manager_id: newManager || null });
+      notify("Reporting line updated ✓");
+      setEditing(null);
+      GET("/api/employees", { org_id: activeOrgId }).then(e => setEmployees(e || []));
+    } catch (e) { notify(e.message, "error"); }
+  };
+
+  const ROLE_ORDER = { org_admin: 1, branch_admin: 2, employee: 3 };
+  const sorted = [...employees].sort((a, b) => (ROLE_ORDER[a.role] || 9) - (ROLE_ORDER[b.role] || 9) || a.name.localeCompare(b.name));
+
+  if (loading) return <Spinner />;
+
+  return (
+    <div style={{ padding: 20 }}>
+      <h2 style={{ color: C.g800, fontSize: 22, fontWeight: 800, marginBottom: 4 }}>Reporting Hierarchy</h2>
+      <p style={{ color: C.gr500, fontSize: 13, marginBottom: 16 }}>Who reports to whom — used for leave and advance approvals</p>
+
+      {/* Approval flow info */}
+      <div style={{ background: C.g50, borderRadius: 16, padding: 16, marginBottom: 20, border: `1px solid ${C.g200}` }}>
+        <p style={{ color: C.g800, fontWeight: 800, marginBottom: 8 }}>Approval flow</p>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          {[["Leave requests", "Branch Admin"], ["Advance requests", "Org Admin"], ["Emergency advances", "Super Admin / Org Admin"]].map(([type, approver]) => (
+            <div key={type} style={{ background: C.white, borderRadius: 10, padding: "8px 12px", border: `1px solid ${C.g200}` }}>
+              <p style={{ color: C.gr500, fontSize: 10 }}>{type}</p>
+              <p style={{ color: C.g700, fontWeight: 700, fontSize: 12 }}>→ {approver}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {sorted.map(emp => {
+        const manager = employees.find(e => e.id === emp.manager_id);
+        const directReports = employees.filter(e => e.manager_id === emp.id);
+        const rc = ROLE_CFG[emp.role] || {};
+        return (
+          <div key={emp.id} style={{ background: C.white, borderRadius: 16, padding: 16, marginBottom: 10, boxShadow: `0 2px 8px ${C.g300}22`, borderLeft: `4px solid ${rc.color || C.g300}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                  <p style={{ color: C.gr900, fontWeight: 800 }}>{emp.name}</p>
+                  <span style={{ background: rc.color + "20", color: rc.color, fontSize: 10, padding: "2px 8px", borderRadius: 20, fontWeight: 700 }}>{rc.label}</span>
+                </div>
+                <p style={{ color: C.gr500, fontSize: 12 }}>{emp.designation} · {emp.branch_name}</p>
+                <p style={{ color: C.gr500, fontSize: 12, marginTop: 4 }}>
+                  Reports to: <strong style={{ color: manager ? C.g700 : C.gr300 }}>{manager?.name || "— (No manager set)"}</strong>
+                </p>
+                {directReports.length > 0 && (
+                  <p style={{ color: C.gr500, fontSize: 12 }}>
+                    Manages: {directReports.map(r => r.name).join(", ")}
+                  </p>
+                )}
+              </div>
+              <button onClick={() => { setEditing(emp.id); setNewManager(emp.manager_id || ""); }}
+                style={{ ...S.outline, padding: "6px 12px", fontSize: 12 }}>✏️</button>
+            </div>
+
+            {editing === emp.id && (
+              <div style={{ marginTop: 12, padding: 12, background: C.g50, borderRadius: 12 }}>
+                <label style={S.label}>Reports to</label>
+                <select style={{ ...S.select, marginBottom: 10 }} value={newManager} onChange={e => setNewManager(e.target.value)}>
+                  <option value="">— No manager —</option>
+                  {employees.filter(e => e.id !== emp.id).map(e => (
+                    <option key={e.id} value={e.id}>{e.name} ({ROLE_CFG[e.role]?.label})</option>
+                  ))}
+                </select>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button style={{ ...S.btn, flex: 1, padding: "10px" }} onClick={() => saveManager(emp.id)}>Save</button>
+                  <button onClick={() => setEditing(null)} style={{ ...S.outline, flex: 1 }}>Cancel</button>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

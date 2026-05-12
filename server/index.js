@@ -194,7 +194,9 @@ app.patch('/api/orgs/:id/settings', auth(['super_admin', 'org_admin', 'branch_ad
     const oid = req.params.id === 'me' ? orgId(req) : req.params.id;
     const allowed = ['grace_period_mins', 'late_deduction_per_occ', 'max_allowed_lates_per_month',
       'excess_late_penalty', 'unauth_leave_penalty', 'no_show_penalty', 'casual_leave_per_month',
-      'auto_checkout_time', 'min_working_hours', 'working_days_per_month', 'geo_fence_radius_meters'];
+      'auto_checkout_time', 'min_working_hours', 'working_days_per_month', 'geo_fence_radius_meters',
+      'monthly_grace_days', 'excess_late_deduction', 'chronic_late_threshold', 'chronic_late_deduction',
+      'advance_notice_days', 'max_advance_amount'];
     const updates = allowed.filter(f => req.body[f] !== undefined);
     if (!updates.length) return res.status(400).json({ error: 'Nothing to update' });
     const set = updates.map((f, i) => `${f} = $${i + 2}`).join(', ');
@@ -356,6 +358,25 @@ app.get('/api/shifts', auth(), async (req, res) => {
     const { rows } = await db(
       'SELECT * FROM shift_templates WHERE org_id=$1 AND is_active=true ORDER BY start_time', [oid]);
     res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /api/my-shift-info — returns employee's default shift + org default
+app.get('/api/my-shift-info', auth(['employee']), async (req, res) => {
+  try {
+    const { rows } = await db(`
+      SELECT
+        emp_shift.id AS emp_shift_id, emp_shift.name AS emp_shift_name,
+        emp_shift.start_time AS emp_start, emp_shift.end_time AS emp_end,
+        org_shift.id AS org_shift_id, org_shift.name AS org_shift_name,
+        org_shift.start_time AS org_start, org_shift.end_time AS org_end
+      FROM users u
+      LEFT JOIN shift_templates emp_shift ON emp_shift.id = u.default_shift_id
+      LEFT JOIN org_settings os ON os.org_id = u.org_id
+      LEFT JOIN shift_templates org_shift ON org_shift.id = os.default_shift_id
+      WHERE u.id = $1
+    `, [req.user.id]);
+    res.json(rows[0] || {});
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -804,38 +825,10 @@ app.get('/api/leaves/audit', auth(['super_admin', 'org_admin', 'branch_admin']),
 });
 
 // ============================================================
-// SALARY — employee self-service endpoint
+// SALARY — employee self-service endpoint (with advance deductions + grace slabs)
 // ============================================================
 
-app.get('/api/my-salary', auth(['employee']), async (req, res) => {
-  try {
-    const now = new Date();
-    const y = parseInt(req.query.year || now.getFullYear());
-    const m = parseInt(req.query.month || (now.getMonth() + 1));
-    const from = `${y}-${pad(m)}-01`;
-    const to = new Date(y, m, 0).toISOString().split('T')[0];
-    const [{ rows: settRows }, { rows: att }, { rows: lvs }, { rows: uRows }] = await Promise.all([
-      db('SELECT * FROM org_settings WHERE org_id=$1', [req.user.org_id]),
-      db('SELECT * FROM attendance_records WHERE employee_id=$1 AND date BETWEEN $2 AND $3', [req.user.id, from, to]),
-      db('SELECT * FROM leaves WHERE employee_id=$1 AND date BETWEEN $2 AND $3', [req.user.id, from, to]),
-      db('SELECT salary FROM users WHERE id=$1', [req.user.id]),
-    ]);
-    const s = settRows[0] || {}, salary = uRows[0]?.salary || 0;
-    const presentDays = att.filter(a => a.check_in_time).length;
-    const lateDays = att.filter(a => a.is_late && a.approval_status !== 'rejected').length;
-    const unauthLeaves = lvs.filter(l => l.type === 'unauthorized').length;
-    const noShows = lvs.filter(l => l.type === 'noshow').length;
-    const casualUsed = lvs.filter(l => l.type === 'casual').length;
-    const dailyRate = salary / (s.working_days_per_month || 26);
-    const earnedGross = presentDays * dailyRate;
-    const excessLates = Math.max(0, lateDays - (s.max_allowed_lates_per_month || 3));
-    const lateDeductions = lateDays * (s.late_deduction_per_occ || 50) + excessLates * (s.excess_late_penalty || 100);
-    const leaveDeductions = unauthLeaves * (s.unauth_leave_penalty || 200);
-    const noShowDeductions = noShows * (s.no_show_penalty || 250);
-    const totalDeductions = lateDeductions + leaveDeductions + noShowDeductions;
-    res.json({ salary, presentDays, lateDays, casualUsed, unauthLeaves, noShows, dailyRate, earnedGross, lateDeductions, leaveDeductions, noShowDeductions, totalDeductions, netEarned: Math.max(0, earnedGross - totalDeductions) });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
+app.get('/ap);
 
 // ============================================================
 // SALARY REPORT
@@ -886,6 +879,123 @@ app.get('/api/salary-report', auth(['super_admin', 'org_admin', 'branch_admin'])
     }));
 
     res.json({ year: y, month: m, from, to, report, total: report.reduce((s, r) => s + r.netEarned, 0) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── SALARY ADVANCES ───────────────────────────────────────────
+
+// GET all advances (admin) or own advances (employee)
+app.get('/api/advances', auth(), async (req, res) => {
+  try {
+    const oid = orgId(req);
+    let sql = `
+      SELECT sa.*, u.name AS employee_name, u.designation, u.branch_id,
+             b.name AS branch_name, ap.name AS approved_by_name
+      FROM salary_advances sa
+      JOIN users u ON u.id = sa.employee_id
+      LEFT JOIN branches b ON b.id = u.branch_id
+      LEFT JOIN users ap ON ap.id = sa.approved_by
+      WHERE sa.org_id = $1
+    `;
+    const params = [oid];
+    if (req.user.role === 'employee') {
+      params.push(req.user.id);
+      sql += ` AND sa.employee_id = $${params.length}`;
+    } else if (req.user.role === 'branch_admin') {
+      params.push(req.user.branch_id);
+      sql += ` AND u.branch_id = $${params.length}`;
+    }
+    sql += ' ORDER BY sa.created_at DESC LIMIT 200';
+    const { rows } = await db(sql, params);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST — employee requests advance
+app.post('/api/advances', auth(), async (req, res) => {
+  try {
+    const oid = req.user.role === 'super_admin' ? req.body.org_id : req.user.org_id;
+    const { amount, reason, needed_by_date, is_emergency } = req.body;
+
+    // Check advance notice policy for non-emergency requests
+    if (!is_emergency && needed_by_date) {
+      const { rows: settRows } = await db('SELECT advance_notice_days, max_advance_amount FROM org_settings WHERE org_id=$1', [oid]);
+      const s = settRows[0] || {};
+      const noticeDays = s.advance_notice_days || 5;
+      const maxAmount = s.max_advance_amount || 10000;
+      const daysUntil = (new Date(needed_by_date) - new Date()) / (1000 * 60 * 60 * 24);
+      if (daysUntil < noticeDays) return res.status(400).json({ error: `Advances must be requested ${noticeDays} days in advance. Mark as emergency if urgent.` });
+      if (amount > maxAmount) return res.status(400).json({ error: `Maximum advance amount is ₹${maxAmount}` });
+    }
+
+    const { rows } = await db(
+      `INSERT INTO salary_advances (org_id, employee_id, amount, reason, needed_by_date, is_emergency, status)
+       VALUES ($1,$2,$3,$4,$5,$6,'pending') RETURNING *`,
+      [oid, req.user.id, amount, reason, needed_by_date || null, is_emergency || false]
+    );
+    res.json(rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST — admin records a manual payment (no prior request)
+app.post('/api/advances/manual', auth(['super_admin', 'org_admin', 'branch_admin']), async (req, res) => {
+  try {
+    const oid = orgId(req);
+    const { employee_id, amount, reason, payment_date, payment_notes, bank_used, recovery_months, is_emergency } = req.body;
+    const { rows } = await db(
+      `INSERT INTO salary_advances
+        (org_id, employee_id, amount, reason, is_emergency, status,
+         payment_date, payment_notes, bank_used, approved_by,
+         recovery_months, monthly_recovery, recovered_amount)
+       VALUES ($1,$2,$3,$4,$5,'recovering',$6,$7,$8,$9,$10,$11,0) RETURNING *`,
+      [oid, employee_id, amount, reason || "Admin recorded payment",
+       is_emergency || false, payment_date, payment_notes, bank_used,
+       req.user.id, recovery_months || 1,
+       Math.round((amount / (recovery_months || 1)) * 100) / 100]
+    );
+    res.json(rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PATCH — approve, reject, or record payment
+app.patch('/api/advances/:id', auth(['super_admin', 'org_admin', 'branch_admin']), async (req, res) => {
+  try {
+    const { status, rejected_reason, payment_date, payment_notes, bank_used, recovery_months, monthly_recovery } = req.body;
+    const updates = [];
+    const params = [];
+    const add = (field, val) => { params.push(val); updates.push(`${field}=$${params.length}`); };
+
+    if (status) add('status', status);
+    if (status === 'approved') { add('approved_by', req.user.id); add('approved_at', new Date().toISOString()); }
+    if (rejected_reason) add('rejected_reason', rejected_reason);
+    if (payment_date) add('payment_date', payment_date);
+    if (payment_notes) add('payment_notes', payment_notes);
+    if (bank_used) add('bank_used', bank_used);
+    if (recovery_months) add('recovery_months', recovery_months);
+    if (monthly_recovery) add('monthly_recovery', monthly_recovery);
+    if (status === 'recovering') add('paid_by', req.user.id);
+    add('updated_at', new Date().toISOString());
+
+    params.push(req.params.id);
+    await db(`UPDATE salary_advances SET ${updates.join(',')} WHERE id=$${params.length}`, params);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET advance recoveries for an employee
+app.get('/api/advances/recoveries', auth(['super_admin', 'org_admin', 'branch_admin']), async (req, res) => {
+  try {
+    const { employee_id } = req.query;
+    const oid = orgId(req);
+    const { rows } = await db(
+      `SELECT ar.*, sa.amount AS advance_amount, sa.reason AS advance_reason
+       FROM advance_recoveries ar
+       JOIN salary_advances sa ON sa.id = ar.advance_id
+       WHERE ar.org_id=$1 ${employee_id ? 'AND ar.employee_id=$2' : ''}
+       ORDER BY ar.year DESC, ar.month DESC`,
+      employee_id ? [oid, employee_id] : [oid]
+    );
+    res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
