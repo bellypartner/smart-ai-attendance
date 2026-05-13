@@ -325,14 +325,9 @@ function EmpApp({user, notify, page, setPage, onLogout}) {
         GET("/api/attendance", {date: today(), employee_id: user.id}),
       ]);
       setBranches(br||[]);
-      const slot1 = (att||[]).find(r=>r.slot===1||!r.slot);
-const slot2 = (att||[]).find(r=>r.slot===2);
-setTodayAtt({
-  cin: slot1,
-  cout: slot1?.check_out_time ? slot1 : null,
-  slot2cin: slot2,
-  slot2cout: slot2?.check_out_time ? slot2 : null,
-});
+      const cin = (att||[]).find(r=>r.type==="checkin");
+      const cout = (att||[]).find(r=>r.type==="checkout");
+      setTodayAtt({cin, cout});
     } catch(e) { notify(e.message,"error"); }
     finally { setLoading(false); }
   },[user.id]);
@@ -381,24 +376,10 @@ setTodayAtt({
         else if(res.isLate) notify(`Checked in ${res.lateMins}m late ⚠`,"warn");
         else notify(`✅ Checked in at ${nowT()}`);
       } else {
-  // Minimum 30 min gap check
-  const cinTime = todayAtt?.cin?.check_in_time;
-  if (cinTime) {
-    const cinMins = toM(String(cinTime).slice(0,5));
-    const nowMins = toM(nowT());
-    const diff = nowMins >= cinMins ? nowMins - cinMins : (1440 - cinMins + nowMins);
-    if (diff < 30) {
-      notify(`⚠ Cannot check out yet — minimum 30 minutes required. ${30 - diff} mins remaining.`, "warn");
-      return;
-    }
-  }
-  // Confirmation dialog
-  if (!window.confirm("Are you sure you want to check out?")) return;
-  const res = await POST("/api/attendance/checkout", {geo_lat:coords?.latitude, geo_lng:coords?.longitude, geo_verified:!!coords});
-const h=Math.floor((res.worked_mins||0)/60), m=(res.worked_mins||0)%60;
-if(res.capped) notify(`⚠ ${res.message}`, "warn");
-else notify(`✅ Shift ${res.slot} checked out — ${h}h ${m}m`);
-}
+        const res = await POST("/api/attendance/checkout", {geo_lat:coords?.latitude, geo_lng:coords?.longitude, geo_verified:!!coords});
+        const h=Math.floor((res.worked_mins||0)/60), m=(res.worked_mins||0)%60;
+        notify(`✅ Checked out — ${h}h ${m}m`);
+      }
       load();
     } catch(e) { notify(e.message,"error"); }
   };
@@ -429,10 +410,7 @@ else notify(`✅ Shift ${res.slot} checked out — ${h}h ${m}m`);
 function EmpHome({user, branch, todayAtt, loading, onScan}) {
   const sc = STATUS_CFG[user.status||"active"]||STATUS_CFG.active;
   const cin = todayAtt?.cin, cout = todayAtt?.cout;
-// Split shift — check if slot 1 done and slot 2 active
-const slot1Done = cin?.check_out_time && cin?.slot===1;
-const slot2Active = todayAtt?.slot2cin;
-const status = !cin?"out":!cout?"in":slot1Done&&!slot2Active?"between":"done";
+  const status = !cin?"out":!cout?"in":"done";
   const [stats, setStats] = useState(null);
 
   useEffect(()=>{
@@ -470,10 +448,7 @@ const status = !cin?"out":!cout?"in":slot1Done&&!slot2Active?"between":"done";
       <button onClick={onScan} disabled={status==="done"||loading}
         style={{width:"100%",background:status==="done"?C.gr300:`linear-gradient(135deg,${C.g700},${C.g500})`,border:"none",borderRadius:20,padding:"20px",cursor:status==="done"?"not-allowed":"pointer",color:C.white,display:"flex",flexDirection:"column",alignItems:"center",gap:6,animation:status!=="done"?"glow 3s infinite":"none",marginBottom:18}}>
         <span style={{fontSize:32}}>📷</span>
-        <span style={{fontSize:16,fontWeight:800}}>{status==="out"?"Scan to Check In — Shift 1":
- status==="in"?"Scan to Check Out — Shift 1":
- status==="between"?"Scan to Check In — Shift 2":
- "Day Complete ✓"}</span>
+        <span style={{fontSize:16,fontWeight:800}}>{status==="out"?"Scan to Check In":status==="in"?"Scan to Check Out":"Day Complete ✓"}</span>
         <span style={{fontSize:12,opacity:0.75}}>Geo-fenced · Tap to mark attendance</span>
       </button>
 
@@ -702,7 +677,7 @@ function EmpProfile({user, notify}) {
 // ── ADMIN APP ──────────────────────────────────────────────────────────────
 function AdminApp({user, notify, page, setPage, activeOrgId, setActiveOrgId, onLogout}) {
   const isSA=user.role==="super_admin", isOA=user.role==="org_admin";
-  const nav=[
+    const nav=[
     ...(isSA?[{k:"sa_orgs",i:"🏢",l:"Orgs"}]:[]),
     {k:"adm_home",i:"🏠",l:"Home"},
     {k:"adm_staff",i:"👥",l:"Staff"},
@@ -710,13 +685,13 @@ function AdminApp({user, notify, page, setPage, activeOrgId, setActiveOrgId, onL
     {k:"adm_override",i:"⚡",l:"Override"},
     {k:"adm_approvals",i:"✅",l:"Approvals"},
     {k:"adm_qr",i:"📷",l:"QR"},
-    {k:"adm_reports",i:"📊",l:"Reports"},
+    ...(isSA||isOA?[{k:"adm_reports",i:"📊",l:"Reports"}]:[]),
     ...(isSA||isOA?[{k:"adm_edit",i:"✏️",l:"Edit Att"}]:[]),
     {k:"adm_settings",i:"⚙️",l:"Settings"},
     {k:"adm_att_table",i:"📊",l:"Att."},
     {k:"adm_leave_hist",i:"📝",l:"Leaves"},
     {k:"adm_daily",i:"🟢",l:"Daily"},
-    {k:"adm_advances",i:"💳",l:"Advances"},
+    ...(isSA||isOA?[{k:"adm_advances",i:"💳",l:"Advances"}]:[]),
     {k:"adm_calendar",i:"🗓",l:"Calendar"},
     {k:"adm_hierarchy",i:"🏛",l:"Hierarchy"},
   ];
@@ -736,7 +711,7 @@ function AdminApp({user, notify, page, setPage, activeOrgId, setActiveOrgId, onL
     adm_daily: <AdminDailyBoard notify={notify} activeOrgId={activeOrgId}/>,
     adm_advances: <AdminAdvances user={user} notify={notify} activeOrgId={activeOrgId}/>,
     adm_calendar: <AttendanceCalendar user={user} notify={notify} isAdmin={true} activeOrgId={activeOrgId}/>,
-    adm_hierarchy: <HierarchyTable notify={notify} activeOrgId={activeOrgId}/>,
+    adm_hierarchy: <HierarchyTable user={user} notify={notify} activeOrgId={activeOrgId}/>,
   };
   return(
     <div style={{display:"flex",flexDirection:"column",height:"100vh",maxWidth:480,margin:"0 auto",background:C.g50}}>
@@ -964,7 +939,9 @@ function AdminStaff({user, notify, activeOrgId}) {
                 <div style={{display:"flex",gap:8,marginTop:12}}>
                   <button style={{...S.outline,flex:1,padding:"8px",fontSize:12}} onClick={()=>{setSelected(e);setTab("form");}}>✏️ Edit</button>
                   <StatusBtn emp={e} onChange={changeStatus}/>
-                  <button onClick={()=>deleteEmp(e)} style={{...S.outline,padding:"8px 12px",fontSize:12,borderColor:C.red,color:C.red}}>🗑</button>
+                  {(user.role==="super_admin"||user.role==="org_admin")&&(
+                    <button onClick={()=>deleteEmp(e)} style={{...S.outline,padding:"8px 12px",fontSize:12,borderColor:C.red,color:C.red}}>🗑</button>
+                  )}
                 </div>
               </div>
             );
@@ -1052,9 +1029,7 @@ function StaffForm({emp, branches, shifts, activeOrgId, user, notify, onSave, on
         <button style={{...S.btn,flex:1}} onClick={()=>onSave(f)}>{isEdit?"Save changes":"Add staff"}</button>
         <button onClick={onCancel} style={{...S.outline,flex:1}}>Cancel</button>
       </div>
-      {isEdit&&(
-        <ResetPasswordBox empId={emp.id} empName={emp.name} notify={notify}/>
-      )}
+      {isEdit&&<ResetPasswordBox empId={emp.id} empName={emp.name} notify={notify}/>}
     </div>
   );
 }
@@ -1431,7 +1406,10 @@ function AdminSettings({user, notify, activeOrgId}) {
             <input style={S.input} type="number" value={settings[k]||""} onChange={e=>setSettings(p=>({...p,[k]:Number(e.target.value)}))}/>
           </div>
         ))}
-        <button style={S.btn} onClick={saveSettings}>Save settings</button>
+        {(user.role==="super_admin"||user.role==="org_admin")
+          ?<button style={S.btn} onClick={saveSettings}>Save settings</button>
+          :<div style={{background:"#fffbeb",border:"1px solid #fcd34d",borderRadius:12,padding:12,marginTop:8}}><p style={{color:"#92400e",fontSize:13,fontWeight:700}}>👁 View only — contact Org Admin to change settings</p></div>
+        }
       </div>
       <h3 style={{color:C.g800,fontWeight:800,marginBottom:12}}>Branches</h3>
       {branches.map(b=>(
@@ -2762,7 +2740,7 @@ function AttendanceCalendar({ user, notify, isAdmin, activeOrgId }) {
 }
 
 // ── HIERARCHY TABLE ───────────────────────────────────────────
-function HierarchyTable({ notify, activeOrgId }) {
+function HierarchyTable({ user, notify, activeOrgId }) {
   const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null);
@@ -2830,8 +2808,10 @@ function HierarchyTable({ notify, activeOrgId }) {
                   </p>
                 )}
               </div>
-              <button onClick={() => { setEditing(emp.id); setNewManager(emp.manager_id || ""); }}
-                style={{ ...S.outline, padding: "6px 12px", fontSize: 12 }}>✏️</button>
+              {(user?.role==="super_admin"||user?.role==="org_admin")&&(
+                <button onClick={() => { setEditing(emp.id); setNewManager(emp.manager_id || ""); }}
+                  style={{ ...S.outline, padding: "6px 12px", fontSize: 12 }}>✏️</button>
+              )}
             </div>
 
             {editing === emp.id && (
@@ -2857,62 +2837,57 @@ function HierarchyTable({ notify, activeOrgId }) {
 }
 
 
-// ── STYLES ─────────────────────────────────────────────────────────────────
+
+// ── RESET PASSWORD (Admin) ────────────────────────────────────
 function ResetPasswordBox({empId, empName, notify}) {
-  const [show, setShow] = useState(false);
-  const [newPw, setNewPw] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  const reset = async () => {
-    if(!newPw || newPw.length < 4) { notify("Password must be at least 4 characters","error"); return; }
+  const [show,setShow]=useState(false);
+  const [newPw,setNewPw]=useState("");
+  const [loading,setLoading]=useState(false);
+  const reset=async()=>{
+    if(!newPw||newPw.length<4){notify("Minimum 4 characters","error");return;}
     setLoading(true);
-    try {
-      await POST(`/api/employees/${empId}/reset-password`, {password: newPw});
+    try{
+      await POST(`/api/employees/${empId}/reset-password`,{password:newPw});
       notify(`✅ Password reset for ${empName}`);
-      setShow(false); setNewPw("");
-    } catch(e) { notify(e.message,"error"); }
-    finally { setLoading(false); }
+      setShow(false);setNewPw("");
+    }catch(e){notify(e.message,"error");}
+    finally{setLoading(false);}
   };
-
   return(
-    <div style={{marginTop:12, background:"#fffbeb", border:"1px solid #fcd34d", borderRadius:14, padding:14}}>
+    <div style={{marginTop:12,background:"#fffbeb",border:"1px solid #fcd34d",borderRadius:14,padding:14}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <p style={{color:"#92400e",fontWeight:700,fontSize:13}}>🔑 Reset Password</p>
-        <button onClick={()=>setShow(!show)} style={{background:"#fef3c7",border:"1px solid #fcd34d",borderRadius:8,padding:"4px 12px",cursor:"pointer",color:"#92400e",fontWeight:700,fontSize:12}}>
-          {show?"Cancel":"Reset"}
-        </button>
+        <button onClick={()=>setShow(!show)} style={{background:"#fef3c7",border:"1px solid #fcd34d",borderRadius:8,padding:"4px 12px",cursor:"pointer",color:"#92400e",fontWeight:700,fontSize:12}}>{show?"Cancel":"Reset"}</button>
       </div>
       {show&&(
         <div style={{marginTop:10}}>
           <label style={S.label}>New password for {empName}</label>
-          <input style={S.input} type="password" placeholder="Enter new password" value={newPw} onChange={e=>setNewPw(e.target.value)}/>
-          <button style={{...S.btn,background:"#d97706"}} onClick={reset} disabled={loading}>
-            {loading?"Saving...":"Set new password"}
-          </button>
+          <input style={S.input} type="password" placeholder="Min 4 characters" value={newPw} onChange={e=>setNewPw(e.target.value)}/>
+          <button style={{...S.btn,background:"#d97706"}} onClick={reset} disabled={loading}>{loading?"Saving...":"Set new password"}</button>
           <p style={{color:"#92400e",fontSize:11,marginTop:6}}>⚠ Share this password securely with the employee</p>
         </div>
       )}
     </div>
   );
 }
-function ChangePasswordBox({notify}) {
-  const [form, setForm] = useState({current:"", newPw:"", confirm:""});
-  const [loading, setLoading] = useState(false);
-  const f=(k,v)=>setForm(p=>({...p,[k]:v}));
 
-  const submit = async () => {
-    if(!form.current||!form.newPw) { notify("Fill all fields","error"); return; }
-    if(form.newPw !== form.confirm) { notify("Passwords don't match","error"); return; }
-    if(form.newPw.length < 4) { notify("Min 4 characters","error"); return; }
+// ── CHANGE PASSWORD (Employee) ────────────────────────────────
+function ChangePasswordBox({notify}) {
+  const [form,setForm]=useState({current:"",newPw:"",confirm:""});
+  const [loading,setLoading]=useState(false);
+  const f=(k,v)=>setForm(p=>({...p,[k]:v}));
+  const submit=async()=>{
+    if(!form.current||!form.newPw){notify("Fill all fields","error");return;}
+    if(form.newPw!==form.confirm){notify("Passwords don't match","error");return;}
+    if(form.newPw.length<4){notify("Minimum 4 characters","error");return;}
     setLoading(true);
-    try {
-      await POST("/api/auth/change-password", {current_password:form.current, new_password:form.newPw});
+    try{
+      await POST("/api/auth/change-password",{current_password:form.current,new_password:form.newPw});
       notify("✅ Password changed successfully");
       setForm({current:"",newPw:"",confirm:""});
-    } catch(e) { notify(e.message,"error"); }
-    finally { setLoading(false); }
+    }catch(e){notify(e.message,"error");}
+    finally{setLoading(false);}
   };
-
   return(
     <div>
       <label style={S.label}>Current password</label>
@@ -2921,12 +2896,12 @@ function ChangePasswordBox({notify}) {
       <input style={S.input} type="password" placeholder="New password (min 4 chars)" value={form.newPw} onChange={e=>f("newPw",e.target.value)}/>
       <label style={S.label}>Confirm new password</label>
       <input style={S.input} type="password" placeholder="Confirm new password" value={form.confirm} onChange={e=>f("confirm",e.target.value)}/>
-      <button style={S.btn} onClick={submit} disabled={loading}>
-        {loading?"Saving...":"Change Password"}
-      </button>
+      <button style={S.btn} onClick={submit} disabled={loading}>{loading?"Saving...":"Change Password"}</button>
     </div>
   );
 }
+
+// ── STYLES ─────────────────────────────────────────────────────────────────
 const S = {
   label: {color:C.g800,fontSize:13,fontWeight:600,marginBottom:6,display:"block"},
   input: {background:C.g50,border:`1.5px solid ${C.g300}`,borderRadius:12,color:C.gr900,padding:"12px 14px",fontSize:14,outline:"none",width:"100%",marginBottom:10},

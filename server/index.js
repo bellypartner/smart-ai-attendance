@@ -261,6 +261,7 @@ app.get('/api/employees', auth(['super_admin', 'org_admin', 'branch_admin']), as
       WHERE u.org_id = $1
         AND u.role NOT IN ('super_admin')
         AND u.is_active = true
+        ${req.user.role === 'branch_admin' ? "AND u.branch_id = '" + req.user.branch_id + "'" : ''}
       ORDER BY u.name
     `, [oid]);
     res.json(rows);
@@ -295,6 +296,9 @@ app.patch('/api/employees/:id', auth(['super_admin', 'org_admin', 'branch_admin'
     const { name, branch_id, designation, salary, default_shift_id, is_active,
       status, relieving_date, relieving_reason, manager_id,
       date_of_joining, employee_code } = req.body;
+    if (is_active === false && req.user.role === 'branch_admin') {
+      return res.status(403).json({ error: 'Only Org Admin or Super Admin can remove staff' });
+    }
     await db(
       `UPDATE users SET name=$1, branch_id=$2, designation=$3, salary=$4,
         default_shift_id=$5, is_active=$6, status=$7, relieving_date=$8,
@@ -459,6 +463,12 @@ app.post('/api/schedules/override', auth(['super_admin', 'org_admin', 'branch_ad
   try {
     const oid = orgId(req);
     const { employee_id, shift_id, date, note } = req.body;
+    if (req.user.role === 'branch_admin') {
+      const { rows: empCheck } = await db('SELECT branch_id FROM users WHERE id=$1', [employee_id]);
+      if (empCheck[0]?.branch_id !== req.user.branch_id) {
+        return res.status(403).json({ error: 'You can only override shifts for your own branch staff' });
+      }
+    }
     await db(`
       INSERT INTO shift_schedules (org_id,employee_id,shift_id,date,is_override,override_note,overridden_by,source)
       VALUES ($1,$2,$3,$4,true,$5,$6,'override')
@@ -553,6 +563,10 @@ app.get('/api/attendance', auth(), async (req, res) => {
       sql += ` AND ar.date::text BETWEEN $${params.length - 1} AND $${params.length}`;
     }
     if (req.user.role === 'employee') { params.push(req.user.id); sql += ` AND ar.employee_id = $${params.length}`; }
+    else if (req.user.role === 'branch_admin') {
+      params.push(req.user.branch_id); sql += ` AND ar.branch_id = $${params.length}`;
+      if (employee_id) { params.push(employee_id); sql += ` AND ar.employee_id = $${params.length}`; }
+    }
     else if (employee_id) { params.push(employee_id); sql += ` AND ar.employee_id = $${params.length}`; }
     sql += ' ORDER BY ar.date DESC, COALESCE(ar.slot,1) ASC, u.name LIMIT 500';
     const { rows } = await db(sql, params);
@@ -656,33 +670,29 @@ app.post('/api/attendance/checkin', auth(['employee']), async (req, res) => {
     const isLate = lateMins > grace;
     const needsApproval = lateMins > grace * 2;
 
-    // Determine slot — if slot 1 already exists and checked out, use slot 2
-const { rows: existingSlots } = await db(
-      `SELECT COALESCE(slot,1) as slot, check_out_time FROM attendance_records 
+    // Determine slot for split shifts
+    const { rows: existingRecs } = await db(
+      `SELECT COALESCE(slot,1) as slot, check_out_time FROM attendance_records
        WHERE employee_id=$1 AND date::text=$2 ORDER BY COALESCE(slot,1)`,
       [req.user.id, date]
-    );
-    const slot1 = existingSlots.find(r => r.slot === 1);
-const useSlot = slot1?.check_out_time ? 2 : 1;
+    ).catch(()=>({rows:[]}));
+    const slot1Rec = existingRecs.find(r=>r.slot===1);
+    const useSlot = (slot1Rec?.check_out_time) ? 2 : 1;
+    if (slot1Rec && !slot1Rec.check_out_time) {
+      return res.status(400).json({ error: 'Please check out from your current shift first' });
+    }
+    if (existingRecs.find(r=>r.slot===2)) {
+      return res.status(400).json({ error: 'Both shifts complete for today' });
+    }
 
-// If slot 1 exists but not checked out — still in first shift
-if (slot1 && !slot1.check_out_time) {
-  return res.status(400).json({ error: 'Please check out from your current shift first.' });
-}
-
-// If slot 2 already exists — day complete
-if (existingSlots.find(r => r.slot === 2)) {
-  return res.status(400).json({ error: 'Both shifts complete for today.' });
-}
-
-const { rows } = await db(`
-  INSERT INTO attendance_records
-    (org_id,employee_id,branch_id,shift_id,date,check_in_time,slot,
-     is_late,late_mins,approval_status,geo_verified,geo_lat,geo_lng,device_fp)
-  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *
-`, [oid, req.user.id, branch_id, shift.shift_id, date, time, useSlot,
-  isLate, Math.max(0, lateMins), needsApproval ? 'pending' : 'approved',
-  geo_verified || false, geo_lat || null, geo_lng || null, device_fp || null]);
+    const { rows } = await db(`
+      INSERT INTO attendance_records
+        (org_id,employee_id,branch_id,shift_id,date,check_in_time,slot,
+         is_late,late_mins,approval_status,geo_verified,geo_lat,geo_lng,device_fp)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *
+    `, [oid, req.user.id, branch_id, shift.shift_id, date, time, useSlot,
+      isLate, Math.max(0, lateMins), needsApproval ? 'pending' : 'approved',
+      geo_verified || false, geo_lat || null, geo_lng || null, device_fp || null]);
 
     if (needsApproval) {
       const { rows: mgr } = await db(
@@ -704,60 +714,33 @@ const { rows } = await db(`
 app.post('/api/attendance/checkout', auth(['employee']), async (req, res) => {
   try {
     const { date, time } = nowIST();
-
-    // Find the active slot (checked in but not checked out)
     const { rows } = await db(
       `SELECT ar.*, st.end_time AS shift_end
        FROM attendance_records ar
        LEFT JOIN shift_templates st ON st.id = ar.shift_id
-       WHERE ar.employee_id=$1 AND ar.date=$2 AND ar.check_in_time IS NOT NULL
-       AND ar.check_out_time IS NULL
+       WHERE ar.employee_id=$1 AND ar.date::text=$2
+       AND ar.check_in_time IS NOT NULL AND ar.check_out_time IS NULL
        ORDER BY COALESCE(ar.slot,1) DESC LIMIT 1`,
-      [req.user.id, date]
-    );
+      [req.user.id, date]);
     if (!rows[0]) return res.status(400).json({ error: 'No active check-in found for today' });
-
     const rec = rows[0];
-
-    // Minimum 30 min enforcement
-    const cinMins = toMins(String(rec.check_in_time).slice(0,5));
-    const nowMins = toMins(time);
-    const diff = nowMins >= cinMins ? nowMins - cinMins : (1440 - cinMins + nowMins);
-    if (diff < 30) return res.status(400).json({
-      error: `Minimum 30 minutes required before checkout. ${30 - diff} minutes remaining.`
-    });
-
-    // Late checkout cap — if checking out more than 4 hours after shift end
-    let checkoutTime = time;
-    let cappedCheckout = false;
-    if (rec.shift_end) {
-      const shiftEndMins = toMins(String(rec.shift_end).slice(0,5));
-      const overMins = nowMins > shiftEndMins ? nowMins - shiftEndMins : 0;
-      if (overMins > 240) {
-        // More than 4 hours late — cap at shift end, flag for admin
-        checkoutTime = String(rec.shift_end).slice(0,5);
-        cappedCheckout = true;
-      }
+    const cinMins2 = toMins(String(rec.check_in_time||"").slice(0,5));
+    const nowMins2 = toMins(time);
+    const diff2 = nowMins2>=cinMins2?nowMins2-cinMins2:(1440-cinMins2+nowMins2);
+    if(diff2<30) return res.status(400).json({error:`Minimum 30 minutes required. ${30-diff2} mins remaining.`});
+    let checkoutTime=time, capped=false;
+    if(rec.shift_end){
+      const endMins=toMins(String(rec.shift_end).slice(0,5));
+      const over=nowMins2>endMins?nowMins2-endMins:0;
+      if(over>240){checkoutTime=String(rec.shift_end).slice(0,5);capped=true;}
     }
-
-    const workedMins = Math.max(0, toMins(checkoutTime) - toMins(String(rec.check_in_time).slice(0,5)));
+    const workedMins=Math.max(0,toMins(checkoutTime)-toMins(String(rec.check_in_time||"").slice(0,5)));
     await db(
-      `UPDATE attendance_records 
-       SET check_out_time=$1, worked_mins=$2, updated_at=now(),
-           notes=CASE WHEN $3 THEN 'Auto-capped: actual checkout was after 4hrs post shift end' ELSE notes END
-       WHERE id=$4`,
-      [checkoutTime, workedMins, cappedCheckout, rec.id]
+      `UPDATE attendance_records SET check_out_time=$1,worked_mins=$2,updated_at=now(),
+       notes=CASE WHEN $3 THEN 'Auto-capped: checked out 4h+ after shift end' ELSE notes END WHERE id=$4`,
+      [checkoutTime,workedMins,capped,rec.id]
     );
-
-    res.json({
-      ok: true,
-      worked_mins: workedMins,
-      slot: rec.slot,
-      capped: cappedCheckout,
-      message: cappedCheckout
-        ? `Checkout recorded at shift end time (${checkoutTime}). Actual time noted for admin review.`
-        : null
-    });
+    res.json({ok:true,worked_mins:workedMins,slot:rec.slot||1,capped,message:capped?`Checkout capped at shift end (${checkoutTime})`:null});
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -957,7 +940,7 @@ app.get('/api/my-salary', auth(['employee']), async (req, res) => {
 
     const s = settRows[0] || {};
     const salary = Number(uRows[0]?.salary || 0);
-    const workingDays = uRows[0]?.working_days_type || 30;
+    const workingDays = uRows[0]?.working_days_type || s.working_days_per_month || 26;
     const presentDays = att.filter(a => a.check_in_time).length;
     const lateDays = att.filter(a => a.is_late && a.approval_status !== 'rejected').length;
     const unauthLeaves = lvs.filter(l => l.type === 'unauthorized').length;
@@ -1005,6 +988,7 @@ app.get('/api/salary-report', auth(['super_admin', 'org_admin', 'branch_admin'])
                b.name AS branch_name, b.id AS branch_id
           FROM users u LEFT JOIN branches b ON b.id=u.branch_id
           WHERE u.org_id=$1 AND u.role='employee' AND u.is_active=true
+          ${req.user.role === 'branch_admin' ? "AND u.branch_id='" + req.user.branch_id + "'" : ''}
           ORDER BY u.name`, [oid]),
       db('SELECT * FROM org_settings WHERE org_id=$1', [oid]),
     ]);
@@ -1115,7 +1099,7 @@ app.post('/api/advances/manual', auth(['super_admin', 'org_admin', 'branch_admin
 });
 
 // PATCH — approve, reject, or record payment
-app.patch('/api/advances/:id', auth(['super_admin', 'org_admin', 'branch_admin']), async (req, res) => {
+app.patch('/api/advances/:id', auth(['super_admin', 'org_admin']), async (req, res) => {
   try {
     const { status, rejected_reason, payment_date, payment_notes, bank_used, recovery_months, monthly_recovery } = req.body;
     const updates = [];
