@@ -325,9 +325,14 @@ function EmpApp({user, notify, page, setPage, onLogout}) {
         GET("/api/attendance", {date: today(), employee_id: user.id}),
       ]);
       setBranches(br||[]);
-      const cin = (att||[]).find(r=>r.type==="checkin");
-      const cout = (att||[]).find(r=>r.type==="checkout");
-      setTodayAtt({cin, cout});
+      const slot1 = (att||[]).find(r=>r.slot===1||!r.slot);
+const slot2 = (att||[]).find(r=>r.slot===2);
+setTodayAtt({
+  cin: slot1,
+  cout: slot1?.check_out_time ? slot1 : null,
+  slot2cin: slot2,
+  slot2cout: slot2?.check_out_time ? slot2 : null,
+});
     } catch(e) { notify(e.message,"error"); }
     finally { setLoading(false); }
   },[user.id]);
@@ -390,8 +395,9 @@ function EmpApp({user, notify, page, setPage, onLogout}) {
   // Confirmation dialog
   if (!window.confirm("Are you sure you want to check out?")) return;
   const res = await POST("/api/attendance/checkout", {geo_lat:coords?.latitude, geo_lng:coords?.longitude, geo_verified:!!coords});
-  const h=Math.floor((res.worked_mins||0)/60), m=(res.worked_mins||0)%60;
-  notify(`✅ Checked out — ${h}h ${m}m`);
+const h=Math.floor((res.worked_mins||0)/60), m=(res.worked_mins||0)%60;
+if(res.capped) notify(`⚠ ${res.message}`, "warn");
+else notify(`✅ Shift ${res.slot} checked out — ${h}h ${m}m`);
 }
       load();
     } catch(e) { notify(e.message,"error"); }
@@ -423,7 +429,10 @@ function EmpApp({user, notify, page, setPage, onLogout}) {
 function EmpHome({user, branch, todayAtt, loading, onScan}) {
   const sc = STATUS_CFG[user.status||"active"]||STATUS_CFG.active;
   const cin = todayAtt?.cin, cout = todayAtt?.cout;
-  const status = !cin?"out":!cout?"in":"done";
+// Split shift — check if slot 1 done and slot 2 active
+const slot1Done = cin?.check_out_time && cin?.slot===1;
+const slot2Active = todayAtt?.slot2cin;
+const status = !cin?"out":!cout?"in":slot1Done&&!slot2Active?"between":"done";
   const [stats, setStats] = useState(null);
 
   useEffect(()=>{
@@ -461,7 +470,10 @@ function EmpHome({user, branch, todayAtt, loading, onScan}) {
       <button onClick={onScan} disabled={status==="done"||loading}
         style={{width:"100%",background:status==="done"?C.gr300:`linear-gradient(135deg,${C.g700},${C.g500})`,border:"none",borderRadius:20,padding:"20px",cursor:status==="done"?"not-allowed":"pointer",color:C.white,display:"flex",flexDirection:"column",alignItems:"center",gap:6,animation:status!=="done"?"glow 3s infinite":"none",marginBottom:18}}>
         <span style={{fontSize:32}}>📷</span>
-        <span style={{fontSize:16,fontWeight:800}}>{status==="out"?"Scan to Check In":status==="in"?"Scan to Check Out":"Day Complete ✓"}</span>
+        <span style={{fontSize:16,fontWeight:800}}>{status==="out"?"Scan to Check In — Shift 1":
+ status==="in"?"Scan to Check Out — Shift 1":
+ status==="between"?"Scan to Check In — Shift 2":
+ "Day Complete ✓"}</span>
         <span style={{fontSize:12,opacity:0.75}}>Geo-fenced · Tap to mark attendance</span>
       </button>
 

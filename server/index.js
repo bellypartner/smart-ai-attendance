@@ -554,7 +554,7 @@ app.get('/api/attendance', auth(), async (req, res) => {
     }
     if (req.user.role === 'employee') { params.push(req.user.id); sql += ` AND ar.employee_id = $${params.length}`; }
     else if (employee_id) { params.push(employee_id); sql += ` AND ar.employee_id = $${params.length}`; }
-    sql += ' ORDER BY ar.date DESC, u.name LIMIT 500';
+    sql += ' ORDER BY ar.date DESC, ar.slot ASC, u.name LIMIT 500';
     const { rows } = await db(sql, params);
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -656,14 +656,33 @@ app.post('/api/attendance/checkin', auth(['employee']), async (req, res) => {
     const isLate = lateMins > grace;
     const needsApproval = lateMins > grace * 2;
 
-    const { rows } = await db(`
-      INSERT INTO attendance_records
-        (org_id,employee_id,branch_id,shift_id,date,check_in_time,
-         is_late,late_mins,approval_status,geo_verified,geo_lat,geo_lng,device_fp)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *
-    `, [oid, req.user.id, branch_id, shift.shift_id, date, time,
-      isLate, Math.max(0, lateMins), needsApproval ? 'pending' : 'approved',
-      geo_verified || false, geo_lat || null, geo_lng || null, device_fp || null]);
+    // Determine slot — if slot 1 already exists and checked out, use slot 2
+const { rows: existingSlots } = await db(
+  `SELECT slot, check_out_time FROM attendance_records 
+   WHERE employee_id=$1 AND date=$2 ORDER BY slot`,
+  [req.user.id, date]
+);
+const slot1 = existingSlots.find(r => r.slot === 1);
+const useSlot = slot1?.check_out_time ? 2 : 1;
+
+// If slot 1 exists but not checked out — still in first shift
+if (slot1 && !slot1.check_out_time) {
+  return res.status(400).json({ error: 'Please check out from your current shift first.' });
+}
+
+// If slot 2 already exists — day complete
+if (existingSlots.find(r => r.slot === 2)) {
+  return res.status(400).json({ error: 'Both shifts complete for today.' });
+}
+
+const { rows } = await db(`
+  INSERT INTO attendance_records
+    (org_id,employee_id,branch_id,shift_id,date,check_in_time,slot,
+     is_late,late_mins,approval_status,geo_verified,geo_lat,geo_lng,device_fp)
+  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *
+`, [oid, req.user.id, branch_id, shift.shift_id, date, time, useSlot,
+  isLate, Math.max(0, lateMins), needsApproval ? 'pending' : 'approved',
+  geo_verified || false, geo_lat || null, geo_lng || null, device_fp || null]);
 
     if (needsApproval) {
       const { rows: mgr } = await db(
@@ -685,22 +704,60 @@ app.post('/api/attendance/checkin', auth(['employee']), async (req, res) => {
 app.post('/api/attendance/checkout', auth(['employee']), async (req, res) => {
   try {
     const { date, time } = nowIST();
+
+    // Find the active slot (checked in but not checked out)
     const { rows } = await db(
-      'SELECT * FROM attendance_records WHERE employee_id=$1 AND date=$2',
-      [req.user.id, date]);
-    if (!rows[0]) return res.status(400).json({ error: 'Not checked in today' });
-    if (rows[0].check_out_time) return res.status(400).json({ error: 'Already checked out' });
-// Server-side minimum 30 min enforcement
-const cinMins = rows[0].check_in_time
-  ? parseInt(String(rows[0].check_in_time).slice(0,2))*60 + parseInt(String(rows[0].check_in_time).slice(3,5))
-  : 0;
-const nowMins = parseInt(time.slice(0,2))*60 + parseInt(time.slice(3,5));
-const diff = nowMins >= cinMins ? nowMins - cinMins : (1440 - cinMins + nowMins);
-if (diff < 30) return res.status(400).json({ error: `Minimum 30 minutes required before checkout. ${30 - diff} minutes remaining.` });
-    const workedMins = Math.max(0, toMins(time) - toMins(rows[0].check_in_time));
-    await db('UPDATE attendance_records SET check_out_time=$1,worked_mins=$2,updated_at=now() WHERE id=$3',
-      [time, workedMins, rows[0].id]);
-    res.json({ ok: true, worked_mins: workedMins });
+      `SELECT ar.*, st.end_time AS shift_end
+       FROM attendance_records ar
+       LEFT JOIN shift_templates st ON st.id = ar.shift_id
+       WHERE ar.employee_id=$1 AND ar.date=$2 AND ar.check_in_time IS NOT NULL
+       AND ar.check_out_time IS NULL
+       ORDER BY ar.slot DESC LIMIT 1`,
+      [req.user.id, date]
+    );
+    if (!rows[0]) return res.status(400).json({ error: 'No active check-in found for today' });
+
+    const rec = rows[0];
+
+    // Minimum 30 min enforcement
+    const cinMins = toMins(String(rec.check_in_time).slice(0,5));
+    const nowMins = toMins(time);
+    const diff = nowMins >= cinMins ? nowMins - cinMins : (1440 - cinMins + nowMins);
+    if (diff < 30) return res.status(400).json({
+      error: `Minimum 30 minutes required before checkout. ${30 - diff} minutes remaining.`
+    });
+
+    // Late checkout cap — if checking out more than 4 hours after shift end
+    let checkoutTime = time;
+    let cappedCheckout = false;
+    if (rec.shift_end) {
+      const shiftEndMins = toMins(String(rec.shift_end).slice(0,5));
+      const overMins = nowMins > shiftEndMins ? nowMins - shiftEndMins : 0;
+      if (overMins > 240) {
+        // More than 4 hours late — cap at shift end, flag for admin
+        checkoutTime = String(rec.shift_end).slice(0,5);
+        cappedCheckout = true;
+      }
+    }
+
+    const workedMins = Math.max(0, toMins(checkoutTime) - toMins(String(rec.check_in_time).slice(0,5)));
+    await db(
+      `UPDATE attendance_records 
+       SET check_out_time=$1, worked_mins=$2, updated_at=now(),
+           notes=CASE WHEN $3 THEN 'Auto-capped: actual checkout was after 4hrs post shift end' ELSE notes END
+       WHERE id=$4`,
+      [checkoutTime, workedMins, cappedCheckout, rec.id]
+    );
+
+    res.json({
+      ok: true,
+      worked_mins: workedMins,
+      slot: rec.slot,
+      capped: cappedCheckout,
+      message: cappedCheckout
+        ? `Checkout recorded at shift end time (${checkoutTime}). Actual time noted for admin review.`
+        : null
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -900,7 +957,7 @@ app.get('/api/my-salary', auth(['employee']), async (req, res) => {
 
     const s = settRows[0] || {};
     const salary = Number(uRows[0]?.salary || 0);
-    const workingDays = uRows[0]?.working_days_type || s.working_days_per_month || 26;
+    const workingDays = uRows[0]?.working_days_type || 30;
     const presentDays = att.filter(a => a.check_in_time).length;
     const lateDays = att.filter(a => a.is_late && a.approval_status !== 'rejected').length;
     const unauthLeaves = lvs.filter(l => l.type === 'unauthorized').length;
@@ -963,7 +1020,7 @@ app.get('/api/salary-report', auth(['super_admin', 'org_admin', 'branch_admin'])
       const unauthLeaves = lvs.filter(l => l.type === 'unauthorized').length;
       const noShows = lvs.filter(l => l.type === 'noshow').length;
       const casualUsed = lvs.filter(l => l.type === 'casual').length;
-      const wdm = s.working_days_per_month || 26;
+      const wdm = emp.working_days_type || 30;
       const dailyRate = emp.salary / wdm;
       const earnedGross = presentDays * dailyRate;
       const excessLates = Math.max(0, lateDays - (s.max_allowed_lates_per_month || 3));
