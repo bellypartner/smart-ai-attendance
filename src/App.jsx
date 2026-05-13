@@ -376,10 +376,23 @@ function EmpApp({user, notify, page, setPage, onLogout}) {
         else if(res.isLate) notify(`Checked in ${res.lateMins}m late ⚠`,"warn");
         else notify(`✅ Checked in at ${nowT()}`);
       } else {
-        const res = await POST("/api/attendance/checkout", {geo_lat:coords?.latitude, geo_lng:coords?.longitude, geo_verified:!!coords});
-        const h=Math.floor((res.worked_mins||0)/60), m=(res.worked_mins||0)%60;
-        notify(`✅ Checked out — ${h}h ${m}m`);
-      }
+  // Minimum 30 min gap check
+  const cinTime = todayAtt?.cin?.check_in_time;
+  if (cinTime) {
+    const cinMins = toM(String(cinTime).slice(0,5));
+    const nowMins = toM(nowT());
+    const diff = nowMins >= cinMins ? nowMins - cinMins : (1440 - cinMins + nowMins);
+    if (diff < 30) {
+      notify(`⚠ Cannot check out yet — minimum 30 minutes required. ${30 - diff} mins remaining.`, "warn");
+      return;
+    }
+  }
+  // Confirmation dialog
+  if (!window.confirm("Are you sure you want to check out?")) return;
+  const res = await POST("/api/attendance/checkout", {geo_lat:coords?.latitude, geo_lng:coords?.longitude, geo_verified:!!coords});
+  const h=Math.floor((res.worked_mins||0)/60), m=(res.worked_mins||0)%60;
+  notify(`✅ Checked out — ${h}h ${m}m`);
+}
       load();
     } catch(e) { notify(e.message,"error"); }
   };

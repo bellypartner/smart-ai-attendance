@@ -690,6 +690,13 @@ app.post('/api/attendance/checkout', auth(['employee']), async (req, res) => {
       [req.user.id, date]);
     if (!rows[0]) return res.status(400).json({ error: 'Not checked in today' });
     if (rows[0].check_out_time) return res.status(400).json({ error: 'Already checked out' });
+// Server-side minimum 30 min enforcement
+const cinMins = rows[0].check_in_time
+  ? parseInt(String(rows[0].check_in_time).slice(0,2))*60 + parseInt(String(rows[0].check_in_time).slice(3,5))
+  : 0;
+const nowMins = parseInt(time.slice(0,2))*60 + parseInt(time.slice(3,5));
+const diff = nowMins >= cinMins ? nowMins - cinMins : (1440 - cinMins + nowMins);
+if (diff < 30) return res.status(400).json({ error: `Minimum 30 minutes required before checkout. ${30 - diff} minutes remaining.` });
     const workedMins = Math.max(0, toMins(time) - toMins(rows[0].check_in_time));
     await db('UPDATE attendance_records SET check_out_time=$1,worked_mins=$2,updated_at=now() WHERE id=$3',
       [time, workedMins, rows[0].id]);
