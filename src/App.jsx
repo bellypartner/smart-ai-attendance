@@ -676,7 +676,8 @@ function EmpProfile({user, notify}) {
 
 // ── ADMIN APP ──────────────────────────────────────────────────────────────
 function AdminApp({user, notify, page, setPage, activeOrgId, setActiveOrgId, onLogout}) {
-  const isSA=user.role==="super_admin", isOA=user.role==="org_admin";
+  const isSA=user.role==="super_admin", isOA=user.role==="org_admin", isBA=user.role==="branch_admin";
+  const [personalMode, setPersonalMode] = useState(false);
     const nav=[
     ...(isSA?[{k:"sa_orgs",i:"🏢",l:"Orgs"}]:[]),
     {k:"adm_home",i:"🏠",l:"Home"},
@@ -716,8 +717,25 @@ function AdminApp({user, notify, page, setPage, activeOrgId, setActiveOrgId, onL
   return(
     <div style={{display:"flex",flexDirection:"column",height:"100vh",maxWidth:480,margin:"0 auto",background:C.g50}}>
       <TopBar user={user} onLogout={onLogout} orgId={activeOrgId}/>
-      <div style={{flex:1,overflowY:"auto",paddingBottom:80}}>{pages[page]||pages.adm_home}</div>
-      <BottomNav items={nav} page={page} setPage={setPage}/>
+      {isBA&&(
+        <div style={{background:C.white,padding:"8px 20px",borderBottom:`1px solid ${C.g100}`,display:"flex",gap:8}}>
+          <button onClick={()=>setPersonalMode(false)}
+            style={{flex:1,background:!personalMode?C.g600:C.g100,border:"none",borderRadius:10,padding:"8px",cursor:"pointer",color:!personalMode?C.white:C.gr500,fontWeight:700,fontSize:13}}>
+            🏢 Admin Panel
+          </button>
+          <button onClick={()=>setPersonalMode(true)}
+            style={{flex:1,background:personalMode?C.g600:C.g100,border:"none",borderRadius:10,padding:"8px",cursor:"pointer",color:personalMode?C.white:C.gr500,fontWeight:700,fontSize:13}}>
+            👤 My Attendance
+          </button>
+        </div>
+      )}
+      {personalMode&&isBA
+        ? <BranchAdminPersonalView user={user} notify={notify} page={page} setPage={setPage}/>
+        : <>
+            <div style={{flex:1,overflowY:"auto",paddingBottom:80}}>{pages[page]||pages.adm_home}</div>
+            <BottomNav items={nav} page={page} setPage={setPage}/>
+          </>
+      }
     </div>
   );
 }
@@ -2898,6 +2916,97 @@ function ChangePasswordBox({notify}) {
       <input style={S.input} type="password" placeholder="Confirm new password" value={form.confirm} onChange={e=>f("confirm",e.target.value)}/>
       <button style={S.btn} onClick={submit} disabled={loading}>{loading?"Saving...":"Change Password"}</button>
     </div>
+  );
+}
+
+
+// ── BRANCH ADMIN PERSONAL VIEW ────────────────────────────────
+function BranchAdminPersonalView({user, notify, page, setPage}) {
+  const [showScanner, setShowScanner] = useState(false);
+  const [branches, setBranches] = useState([]);
+  const [todayAtt, setTodayAtt] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    try {
+      const [br, att] = await Promise.all([
+        GET("/api/branches"),
+        GET("/api/attendance", {date: today(), employee_id: user.id}),
+      ]);
+      setBranches((br||[]).filter(b=>b.org_id===user.org_id));
+      const slot1 = (att||[]).find(r=>r.slot===1||!r.slot);
+      const slot2 = (att||[]).find(r=>r.slot===2);
+      setTodayAtt({
+        cin: slot1, cout: slot1?.check_out_time?slot1:null,
+        slot2cin: slot2, slot2cout: slot2?.check_out_time?slot2:null,
+      });
+    } catch(e) { notify(e.message,"error"); }
+    finally { setLoading(false); }
+  },[user.id]);
+
+  useEffect(()=>{ load(); },[load]);
+
+  const handleScan = (qd) => {
+    setShowScanner(false);
+    const scBr = branches.find(b=>b.id===qd.branchId);
+    if(!scBr){notify("Branch not found","error");return;}
+    if(todayAtt?.cin&&todayAtt?.cout&&todayAtt?.slot2cout){notify("Both shifts complete","error");return;}
+    notify("📍 Checking location…","info");
+    if(navigator.geolocation){
+      navigator.geolocation.getCurrentPosition(
+        pos=>{
+          const dist=geoDist(pos.coords.latitude,pos.coords.longitude,scBr.lat,scBr.lng);
+          if(dist>(scBr.radius||200)){notify(`❌ ${Math.round(dist)}m away. Must be within ${scBr.radius||200}m`,"error");return;}
+          processAtt(qd.branchId,pos.coords);
+        },
+        ()=>processAtt(qd.branchId,null),
+        {timeout:10000,enableHighAccuracy:true,maximumAge:0}
+      );
+    } else processAtt(qd.branchId,null);
+  };
+
+  const processAtt = async (branchId, coords) => {
+    try {
+      const fp = await getDeviceFingerprint();
+      if(!todayAtt?.cin||(todayAtt?.cin?.check_out_time&&!todayAtt?.slot2cin)){
+        const res = await POST("/api/attendance/checkin",{branch_id:branchId,geo_lat:coords?.latitude,geo_lng:coords?.longitude,geo_verified:!!coords,device_fp:fp});
+        if(res.blocked){notify(res.error,"error");return;}
+        if(res.needsApproval) notify(`${res.lateMins}m late — approval sent ⏳`,"warn");
+        else if(res.isLate) notify(`Checked in ${res.lateMins}m late ⚠`,"warn");
+        else notify(`✅ Checked in — Shift ${res.slot||1}`);
+      } else {
+        const cinTime = todayAtt.cin?.check_in_time;
+        if(cinTime){
+          const diff = toM(nowT())-toM(String(cinTime).slice(0,5));
+          if(diff<30){notify(`⚠ Minimum 30 minutes required. ${30-diff} mins remaining.`,"warn");return;}
+        }
+        if(!window.confirm("Are you sure you want to check out?")) return;
+        const res = await POST("/api/attendance/checkout",{geo_lat:coords?.latitude,geo_lng:coords?.longitude,geo_verified:!!coords});
+        const h=Math.floor((res.worked_mins||0)/60),m=(res.worked_mins||0)%60;
+        if(res.capped) notify(`⚠ ${res.message}`,"warn");
+        else notify(`✅ Checked out — ${h}h ${m}m`);
+      }
+      load();
+    } catch(e){ notify(e.message,"error"); }
+  };
+
+  const myBranch = branches.find(b=>b.id===user.branch_id);
+  const empNav=[{k:"home",i:"🏠",l:"Home"},{k:"shifts",i:"📅",l:"Shifts"},{k:"history",i:"📋",l:"History"},{k:"salary",i:"💰",l:"Salary"},{k:"advances",i:"💳",l:"Advance"},{k:"profile",i:"👤",l:"Profile"}];
+  const empPages={
+    home: <EmpHome user={user} branch={myBranch} todayAtt={todayAtt} loading={loading} onScan={()=>setShowScanner(true)}/>,
+    shifts: <EmpShifts user={user} notify={notify}/>,
+    history: <EmpHistory user={user} notify={notify}/>,
+    salary: <EmpSalary user={user} notify={notify}/>,
+    advances: <EmpAdvances user={user} notify={notify}/>,
+    profile: <EmpProfile user={user} notify={notify}/>,
+  };
+
+  return(
+    <>
+      {showScanner&&<QRScanner onScan={handleScan} onClose={()=>setShowScanner(false)} branches={branches}/>}
+      <div style={{flex:1,overflowY:"auto",paddingBottom:80}}>{empPages[page]||empPages.home}</div>
+      <BottomNav items={empNav} page={page} setPage={setPage}/>
+    </>
   );
 }
 
