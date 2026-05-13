@@ -554,7 +554,7 @@ app.get('/api/attendance', auth(), async (req, res) => {
     }
     if (req.user.role === 'employee') { params.push(req.user.id); sql += ` AND ar.employee_id = $${params.length}`; }
     else if (employee_id) { params.push(employee_id); sql += ` AND ar.employee_id = $${params.length}`; }
-    sql += ' ORDER BY ar.date DESC, ar.slot ASC, u.name LIMIT 500';
+    sql += ' ORDER BY ar.date DESC, COALESCE(ar.slot,1) ASC, u.name LIMIT 500';
     const { rows } = await db(sql, params);
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -658,11 +658,11 @@ app.post('/api/attendance/checkin', auth(['employee']), async (req, res) => {
 
     // Determine slot — if slot 1 already exists and checked out, use slot 2
 const { rows: existingSlots } = await db(
-  `SELECT slot, check_out_time FROM attendance_records 
-   WHERE employee_id=$1 AND date=$2 ORDER BY slot`,
-  [req.user.id, date]
-);
-const slot1 = existingSlots.find(r => r.slot === 1);
+      `SELECT COALESCE(slot,1) as slot, check_out_time FROM attendance_records 
+       WHERE employee_id=$1 AND date::text=$2 ORDER BY COALESCE(slot,1)`,
+      [req.user.id, date]
+    );
+    const slot1 = existingSlots.find(r => r.slot === 1);
 const useSlot = slot1?.check_out_time ? 2 : 1;
 
 // If slot 1 exists but not checked out — still in first shift
@@ -712,7 +712,7 @@ app.post('/api/attendance/checkout', auth(['employee']), async (req, res) => {
        LEFT JOIN shift_templates st ON st.id = ar.shift_id
        WHERE ar.employee_id=$1 AND ar.date=$2 AND ar.check_in_time IS NOT NULL
        AND ar.check_out_time IS NULL
-       ORDER BY ar.slot DESC LIMIT 1`,
+       ORDER BY COALESCE(ar.slot,1) DESC LIMIT 1`,
       [req.user.id, date]
     );
     if (!rows[0]) return res.status(400).json({ error: 'No active check-in found for today' });
