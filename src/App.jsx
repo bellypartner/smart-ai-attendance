@@ -691,6 +691,10 @@ function EmpProfile({user, notify}) {
           </div>
         ))}
       </div>
+      <div style={{background:C.white,borderRadius:20,padding:20,marginTop:16,boxShadow:`0 2px 10px ${C.g300}33`}}>
+        <p style={{color:C.g800,fontWeight:800,fontSize:15,marginBottom:14}}>🔑 Change Password</p>
+        <ChangePasswordBox notify={notify}/>
+      </div>
     </div>
   );
 }
@@ -1048,6 +1052,9 @@ function StaffForm({emp, branches, shifts, activeOrgId, user, notify, onSave, on
         <button style={{...S.btn,flex:1}} onClick={()=>onSave(f)}>{isEdit?"Save changes":"Add staff"}</button>
         <button onClick={onCancel} style={{...S.outline,flex:1}}>Cancel</button>
       </div>
+      {isEdit&&(
+        <ResetPasswordBox empId={emp.id} empName={emp.name} notify={notify}/>
+      )}
     </div>
   );
 }
@@ -2851,6 +2858,75 @@ function HierarchyTable({ notify, activeOrgId }) {
 
 
 // ── STYLES ─────────────────────────────────────────────────────────────────
+function ResetPasswordBox({empId, empName, notify}) {
+  const [show, setShow] = useState(false);
+  const [newPw, setNewPw] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const reset = async () => {
+    if(!newPw || newPw.length < 4) { notify("Password must be at least 4 characters","error"); return; }
+    setLoading(true);
+    try {
+      await POST(`/api/employees/${empId}/reset-password`, {password: newPw});
+      notify(`✅ Password reset for ${empName}`);
+      setShow(false); setNewPw("");
+    } catch(e) { notify(e.message,"error"); }
+    finally { setLoading(false); }
+  };
+
+  return(
+    <div style={{marginTop:12, background:"#fffbeb", border:"1px solid #fcd34d", borderRadius:14, padding:14}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <p style={{color:"#92400e",fontWeight:700,fontSize:13}}>🔑 Reset Password</p>
+        <button onClick={()=>setShow(!show)} style={{background:"#fef3c7",border:"1px solid #fcd34d",borderRadius:8,padding:"4px 12px",cursor:"pointer",color:"#92400e",fontWeight:700,fontSize:12}}>
+          {show?"Cancel":"Reset"}
+        </button>
+      </div>
+      {show&&(
+        <div style={{marginTop:10}}>
+          <label style={S.label}>New password for {empName}</label>
+          <input style={S.input} type="password" placeholder="Enter new password" value={newPw} onChange={e=>setNewPw(e.target.value)}/>
+          <button style={{...S.btn,background:"#d97706"}} onClick={reset} disabled={loading}>
+            {loading?"Saving...":"Set new password"}
+          </button>
+          <p style={{color:"#92400e",fontSize:11,marginTop:6}}>⚠ Share this password securely with the employee</p>
+        </div>
+      )}
+    </div>
+  );
+}
+function ChangePasswordBox({notify}) {
+  const [form, setForm] = useState({current:"", newPw:"", confirm:""});
+  const [loading, setLoading] = useState(false);
+  const f=(k,v)=>setForm(p=>({...p,[k]:v}));
+
+  const submit = async () => {
+    if(!form.current||!form.newPw) { notify("Fill all fields","error"); return; }
+    if(form.newPw !== form.confirm) { notify("Passwords don't match","error"); return; }
+    if(form.newPw.length < 4) { notify("Min 4 characters","error"); return; }
+    setLoading(true);
+    try {
+      await POST("/api/auth/change-password", {current_password:form.current, new_password:form.newPw});
+      notify("✅ Password changed successfully");
+      setForm({current:"",newPw:"",confirm:""});
+    } catch(e) { notify(e.message,"error"); }
+    finally { setLoading(false); }
+  };
+
+  return(
+    <div>
+      <label style={S.label}>Current password</label>
+      <input style={S.input} type="password" placeholder="Current password" value={form.current} onChange={e=>f("current",e.target.value)}/>
+      <label style={S.label}>New password</label>
+      <input style={S.input} type="password" placeholder="New password (min 4 chars)" value={form.newPw} onChange={e=>f("newPw",e.target.value)}/>
+      <label style={S.label}>Confirm new password</label>
+      <input style={S.input} type="password" placeholder="Confirm new password" value={form.confirm} onChange={e=>f("confirm",e.target.value)}/>
+      <button style={S.btn} onClick={submit} disabled={loading}>
+        {loading?"Saving...":"Change Password"}
+      </button>
+    </div>
+  );
+}
 const S = {
   label: {color:C.g800,fontSize:13,fontWeight:600,marginBottom:6,display:"block"},
   input: {background:C.g50,border:`1.5px solid ${C.g300}`,borderRadius:12,color:C.gr900,padding:"12px 14px",fontSize:14,outline:"none",width:"100%",marginBottom:10},
