@@ -533,7 +533,11 @@ app.get('/api/attendance', auth(), async (req, res) => {
     const { from, to, date, employee_id } = req.query;
     const todayDate = nowIST().date;
     let sql = `
-      SELECT ar.*, u.name AS employee_name, u.designation,
+      SELECT ar.*,
+             ar.date::text AS date,
+             ar.check_in_time::text AS check_in_time,
+             ar.check_out_time::text AS check_out_time,
+             u.name AS employee_name, u.designation,
              b.name AS branch_name, st.name AS shift_name,
              st.start_time AS shift_start, st.end_time AS shift_end
       FROM attendance_records ar
@@ -543,10 +547,10 @@ app.get('/api/attendance', auth(), async (req, res) => {
       WHERE ar.org_id = $1
     `;
     const params = [oid];
-    if (date) { params.push(date); sql += ` AND ar.date = $${params.length}`; }
+    if (date) { params.push(date); sql += ` AND ar.date::text = $${params.length}`; }
     else {
       params.push(from || todayDate); params.push(to || todayDate);
-      sql += ` AND ar.date BETWEEN $${params.length - 1} AND $${params.length}`;
+      sql += ` AND ar.date::text BETWEEN $${params.length - 1} AND $${params.length}`;
     }
     if (req.user.role === 'employee') { params.push(req.user.id); sql += ` AND ar.employee_id = $${params.length}`; }
     else if (employee_id) { params.push(employee_id); sql += ` AND ar.employee_id = $${params.length}`; }
@@ -559,7 +563,49 @@ app.get('/api/attendance', auth(), async (req, res) => {
 // Check-in
 app.post('/api/attendance/checkin', auth(['employee']), async (req, res) => {
   try {
-    const { branch_id, geo_lat, geo_lng, geo_verified } = req.body;
+    const { branch_id, geo_lat, geo_lng, geo_verified, device_fp } = req.body;
+
+    // ── DEVICE FINGERPRINT CHECK ──────────────────────────────
+    if (device_fp) {
+      // Check if this device fingerprint was used by a DIFFERENT employee today
+      const istDate = nowIST().date;
+      const { rows: fpRows } = await db(`
+        SELECT ar.employee_id, u.name AS employee_name
+        FROM attendance_records ar
+        JOIN users u ON u.id = ar.employee_id
+        WHERE ar.device_fp = $1
+          AND ar.date::text = $2
+          AND ar.employee_id != $3
+        LIMIT 1
+      `, [device_fp, istDate, req.user.id]).catch(() => ({ rows: [] }));
+
+      if (fpRows[0]) {
+        return res.status(403).json({
+          error: `This device already recorded attendance for ${fpRows[0].employee_name} today. One device can only be used for one employee per day.`,
+          blocked: true,
+        });
+      }
+
+      // Check time gap — if this device checked out an employee in last 60 mins
+      const { rows: gapRows } = await db(`
+        SELECT ar.check_out_time, u.name AS employee_name
+        FROM attendance_records ar
+        JOIN users u ON u.id = ar.employee_id
+        WHERE ar.device_fp = $1
+          AND ar.date::text = $2
+          AND ar.employee_id != $3
+          AND ar.check_out_time IS NOT NULL
+          AND ar.check_out_time > (NOW() AT TIME ZONE 'Asia/Kolkata' - INTERVAL '60 minutes')::time
+        LIMIT 1
+      `, [device_fp, istDate, req.user.id]).catch(() => ({ rows: [] }));
+
+      if (gapRows[0]) {
+        return res.status(403).json({
+          error: `This device was used for ${gapRows[0].employee_name} less than 60 minutes ago. Please wait before marking attendance for another employee.`,
+          blocked: true,
+        });
+      }
+    }
     const oid = req.user.org_id;
     const { date, time } = nowIST();
 
@@ -613,11 +659,11 @@ app.post('/api/attendance/checkin', auth(['employee']), async (req, res) => {
     const { rows } = await db(`
       INSERT INTO attendance_records
         (org_id,employee_id,branch_id,shift_id,date,check_in_time,
-         is_late,late_mins,approval_status,geo_verified,geo_lat,geo_lng)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *
+         is_late,late_mins,approval_status,geo_verified,geo_lat,geo_lng,device_fp)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *
     `, [oid, req.user.id, branch_id, shift.shift_id, date, time,
       isLate, Math.max(0, lateMins), needsApproval ? 'pending' : 'approved',
-      geo_verified || false, geo_lat || null, geo_lng || null]);
+      geo_verified || false, geo_lat || null, geo_lng || null, device_fp || null]);
 
     if (needsApproval) {
       const { rows: mgr } = await db(
@@ -735,8 +781,8 @@ app.get('/api/leaves', auth(), async (req, res) => {
     const params = [oid];
     if (req.user.role === 'employee') { params.push(req.user.id); sql += ` AND l.employee_id=$${params.length}`; }
     else if (employee_id) { params.push(employee_id); sql += ` AND l.employee_id=$${params.length}`; }
-    if (from) { params.push(from); sql += ` AND l.date>=$${params.length}`; }
-    if (to) { params.push(to); sql += ` AND l.date<=$${params.length}`; }
+    if (from) { params.push(from); sql += ` AND l.date::text>=$${params.length}`; }
+    if (to) { params.push(to); sql += ` AND l.date::text<=$${params.length}`; }
     sql += ' ORDER BY l.date DESC LIMIT 500';
     const { rows } = await db(sql, params);
     res.json(rows);

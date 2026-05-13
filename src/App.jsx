@@ -35,6 +35,85 @@ const ROLE_CFG = {
   employee:     {label:"Employee",     color:C.blue},
 };
 
+
+// ── DEVICE FINGERPRINTING ─────────────────────────────────────
+async function getDeviceFingerprint() {
+  const signals = [
+    navigator.userAgent,
+    navigator.language,
+    screen.width + "x" + screen.height,
+    screen.colorDepth,
+    new Date().getTimezoneOffset(),
+    navigator.hardwareConcurrency || 0,
+    navigator.deviceMemory || 0,
+    navigator.platform || "",
+  ];
+  // Canvas fingerprint
+  try {
+    const cv = document.createElement("canvas");
+    const ctx = cv.getContext("2d");
+    ctx.textBaseline = "top";
+    ctx.font = "14px Arial";
+    ctx.fillText("SmartAi3SL🔒", 2, 2);
+    signals.push(cv.toDataURL().slice(-50));
+  } catch(e) {}
+  // Audio fingerprint
+  try {
+    const ac = new (window.AudioContext||window.webkitAudioContext)();
+    const osc = ac.createOscillator();
+    const an = ac.createAnalyser();
+    osc.connect(an);
+    an.connect(ac.destination);
+    osc.start(0);
+    const data = new Float32Array(an.frequencyBinCount);
+    an.getFloatFrequencyData(data);
+    signals.push(data[0].toFixed(3));
+    osc.stop();
+    ac.close();
+  } catch(e) {}
+  // Hash all signals
+  const str = signals.join("|");
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const chr = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + chr;
+    hash |= 0;
+  }
+  const fp = Math.abs(hash).toString(36) + str.length.toString(36);
+  // Store in both localStorage and IndexedDB for cross-browser detection
+  try { localStorage.setItem("saa_device_fp", fp); } catch(e) {}
+  try {
+    const req = indexedDB.open("saa_fp_db", 1);
+    req.onupgradeneeded = e => e.target.result.createObjectStore("fp", {keyPath:"k"});
+    req.onsuccess = e => {
+      const tx = e.target.result.transaction("fp","readwrite");
+      tx.objectStore("fp").put({k:"device_fp", v:fp});
+    };
+  } catch(e) {}
+  return fp;
+}
+
+async function getStoredFingerprint() {
+  // Check localStorage first
+  const lsFp = localStorage.getItem("saa_device_fp");
+  if (lsFp) return lsFp;
+  // Check IndexedDB
+  return new Promise(resolve => {
+    try {
+      const req = indexedDB.open("saa_fp_db", 1);
+      req.onsuccess = e => {
+        try {
+          const tx = e.target.result.transaction("fp","readonly");
+          const getReq = tx.objectStore("fp").get("device_fp");
+          getReq.onsuccess = () => resolve(getReq.result?.v || null);
+          getReq.onerror = () => resolve(null);
+        } catch { resolve(null); }
+      };
+      req.onerror = () => resolve(null);
+    } catch { resolve(null); }
+  });
+}
+
 // ── API CLIENT ─────────────────────────────────────────────────────────────
 const TOKEN_KEY = "saa_token";
 const getToken = () => localStorage.getItem(TOKEN_KEY);
@@ -289,7 +368,10 @@ function EmpApp({user, notify, page, setPage, onLogout}) {
   const processAtt = async (branchId, coords) => {
     try {
       if(!todayAtt?.cin) {
-        const res = await POST("/api/attendance/checkin", {branch_id:branchId, geo_lat:coords?.latitude, geo_lng:coords?.longitude, geo_verified:!!coords});
+        // Generate and send device fingerprint with check-in
+        const fp = await getDeviceFingerprint();
+        const res = await POST("/api/attendance/checkin", {branch_id:branchId, geo_lat:coords?.latitude, geo_lng:coords?.longitude, geo_verified:!!coords, device_fp:fp});
+        if(res.blocked) { notify(res.error, "error"); return; }
         if(res.needsApproval) notify(`${res.lateMins}m late — approval sent ⏳`,"warn");
         else if(res.isLate) notify(`Checked in ${res.lateMins}m late ⚠`,"warn");
         else notify(`✅ Checked in at ${nowT()}`);
