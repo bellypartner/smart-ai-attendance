@@ -327,14 +327,14 @@ app.post('/api/employees', auth(['super_admin', 'org_admin', 'branch_admin']), a
 });
 app.delete('/api/employees/:id', auth(['super_admin', 'org_admin']), async (req, res) => {
   try {
-    const { rows } = await db('SELECT role FROM users WHERE id=$1', [req.params.id]);
+    const { rows } = await db('SELECT role, name FROM users WHERE id=$1', [req.params.id]);
     if (!rows[0]) return res.status(404).json({ error: 'Employee not found' });
     if (rows[0].role === 'super_admin') return res.status(403).json({ error: 'Cannot delete super admin' });
-    // Soft delete — deactivate instead of hard delete to preserve history
-    await db(
-      `UPDATE users SET is_active=false, status='relieved', updated_at=now() WHERE id=$1`,
-      [req.params.id]
-    );
+    if (rows[0].role === 'org_admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ error: 'Only Super Admin can delete an Org Admin' });
+    }
+    // Hard delete — removes from DB completely
+    await db('DELETE FROM users WHERE id=$1', [req.params.id]);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
