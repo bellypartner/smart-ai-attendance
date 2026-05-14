@@ -1869,7 +1869,7 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
                 onClick={async()=>{try{await PATCH(`/api/attendance/${editRec.id}/waive-early`,{});notify("Early checkout penalty waived ✓");setEditRec(null);await loadRecords();}catch(e){notify(e.message,"error");}}}>
                 ✅ Waive early checkout penalty
               </button>
-            
+            )}
             </div>
           </div>
         </div>
