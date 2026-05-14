@@ -1870,11 +1870,12 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
                 ✅ Waive early checkout penalty
               </button>
             )}
-            </div>
           </div>
-      )</div>
+        </div>
+      
       )}
-    </div>
+      </div>
+      
   );
 }
 
