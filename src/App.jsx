@@ -1872,7 +1872,7 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
             )}
             </div>
           </div>
-        </div>
+      )</div>
       )}
     </div>
   );
