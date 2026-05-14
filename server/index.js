@@ -325,24 +325,54 @@ app.post('/api/employees', auth(['super_admin', 'org_admin', 'branch_admin']), a
     else res.status(500).json({ error: e.message });
   }
 });
+app.delete('/api/employees/:id', auth(['super_admin', 'org_admin']), async (req, res) => {
+  try {
+    const { rows } = await db('SELECT role FROM users WHERE id=$1', [req.params.id]);
+    if (!rows[0]) return res.status(404).json({ error: 'Employee not found' });
+    if (rows[0].role === 'super_admin') return res.status(403).json({ error: 'Cannot delete super admin' });
+    // Soft delete — deactivate instead of hard delete to preserve history
+    await db(
+      `UPDATE users SET is_active=false, status='relieved', updated_at=now() WHERE id=$1`,
+      [req.params.id]
+    );
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
 app.patch('/api/employees/:id', auth(['super_admin', 'org_admin', 'branch_admin']), async (req, res) => {
   try {
-    const { name, branch_id, designation, salary, default_shift_id, is_active,
+    const { name, phone, branch_id, designation, salary, default_shift_id, is_active,
       status, relieving_date, relieving_reason, manager_id,
-      date_of_joining, employee_code } = req.body;
+      date_of_joining, employee_code, working_days_type } = req.body;
     if (is_active === false && req.user.role === 'branch_admin') {
       return res.status(403).json({ error: 'Only Org Admin or Super Admin can remove staff' });
     }
+    // Fetch current values so partial updates don't null out fields
+    const { rows: cur } = await db('SELECT * FROM users WHERE id=$1', [req.params.id]);
+    if (!cur[0]) return res.status(404).json({ error: 'Employee not found' });
+    const c = cur[0];
     await db(
-      `UPDATE users SET name=$1, branch_id=$2, designation=$3, salary=$4,
-        default_shift_id=$5, is_active=$6, status=$7, relieving_date=$8,
-        relieving_reason=$9, manager_id=$10, date_of_joining=$11,
-        employee_code=$12, updated_at=now() WHERE id=$13`,
-      [name, branch_id, designation, salary, default_shift_id,
-        is_active ?? true, status ?? 'active', relieving_date || null,
-        relieving_reason || null, manager_id || null,
-        date_of_joining || null, employee_code || null, req.params.id]
+      `UPDATE users SET name=$1, phone=$2, branch_id=$3, designation=$4, salary=$5,
+        default_shift_id=$6, is_active=$7, status=$8, relieving_date=$9,
+        relieving_reason=$10, manager_id=$11, date_of_joining=$12,
+        employee_code=$13, working_days_type=$14, updated_at=now() WHERE id=$15`,
+      [
+        name           ?? c.name,
+        phone          ?? c.phone,
+        branch_id      ?? c.branch_id,
+        designation    ?? c.designation,
+        salary         ?? c.salary,
+        default_shift_id !== undefined ? (default_shift_id || null) : c.default_shift_id,
+        is_active      ?? c.is_active,
+        status         ?? c.status,
+        relieving_date !== undefined ? (relieving_date || null) : c.relieving_date,
+        relieving_reason !== undefined ? (relieving_reason || null) : c.relieving_reason,
+        manager_id     !== undefined ? (manager_id || null) : c.manager_id,
+        date_of_joining !== undefined ? (date_of_joining || null) : c.date_of_joining,
+        employee_code  !== undefined ? (employee_code || null) : c.employee_code,
+        working_days_type ?? c.working_days_type ?? 30,
+        req.params.id
+      ]
     );
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
