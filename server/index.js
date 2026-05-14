@@ -11,6 +11,7 @@ import jwt from 'jsonwebtoken';
 import pg from 'pg';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import webpush from 'web-push';
 import 'dotenv/config';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -27,6 +28,40 @@ const pool = new Pool({
 });
 pool.on('error', (err) => console.error('DB pool error:', err.message));
 const db = (sql, params) => pool.query(sql, params);
+
+// ── VAPID PUSH NOTIFICATIONS ──────────────────────────────────
+if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+  webpush.setVapidDetails(
+    'mailto:' + (process.env.VAPID_EMAIL || 'admin@saladcaffe.com'),
+    process.env.VAPID_PUBLIC_KEY,
+    process.env.VAPID_PRIVATE_KEY
+  );
+}
+
+async function sendPushNotification(userId, title, body, data = {}) {
+  try {
+    const { rows } = await db('SELECT * FROM push_subscriptions WHERE user_id=$1', [userId]);
+    const payload = JSON.stringify({ title, body, ...data });
+    for (const sub of rows) {
+      const pushSub = { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } };
+      webpush.sendNotification(pushSub, payload).catch(async (err) => {
+        if (err.statusCode === 410 || err.statusCode === 404) {
+          await db('DELETE FROM push_subscriptions WHERE id=$1', [sub.id]).catch(() => {});
+        }
+      });
+    }
+  } catch (e) { console.error('Push error:', e.message); }
+}
+
+async function createNotification(userId, orgId, title, body, type, refId) {
+  try {
+    await db(
+      'INSERT INTO notifications (user_id, org_id, title, body, type, ref_id) VALUES ($1,$2,$3,$4,$5,$6)',
+      [userId, orgId, title, body, type, refId || null]
+    );
+    await sendPushNotification(userId, title, body, { tag: type, url: '/' });
+  } catch (e) { console.error('Notification error:', e.message); }
+}
 
 // ── MIDDLEWARE ────────────────────────────────────────────────
 app.use(cors());
@@ -510,6 +545,13 @@ app.post('/api/shift-requests', auth(['employee']), async (req, res) => {
     const { rows } = await db(
       'INSERT INTO shift_requests (org_id,employee_id,manager_id,requested_shift_id,date,note) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *',
       [oid, req.user.id, manager_id, requested_shift_id, date, note]);
+    // Notify manager
+    if (manager_id) {
+      await createNotification(manager_id, oid,
+        '🔄 Shift Change Request',
+        `${req.user.name} requested a shift change for ${date}`,
+        'shift_request', rows[0].id);
+    }
     res.json(rows[0]);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -579,43 +621,48 @@ app.post('/api/attendance/checkin', auth(['employee']), async (req, res) => {
   try {
     const { branch_id, geo_lat, geo_lng, geo_verified, device_fp } = req.body;
 
-    // ── DEVICE FINGERPRINT CHECK ──────────────────────────────
+    // ── DEVICE BINDING CHECK ─────────────────────────────────
     if (device_fp) {
-      // Check if this device fingerprint was used by a DIFFERENT employee today
-      const istDate = nowIST().date;
-      const { rows: fpRows } = await db(`
-        SELECT ar.employee_id, u.name AS employee_name
-        FROM attendance_records ar
-        JOIN users u ON u.id = ar.employee_id
-        WHERE ar.device_fp = $1
-          AND ar.date::text = $2
-          AND ar.employee_id != $3
-        LIMIT 1
-      `, [device_fp, istDate, req.user.id]).catch(() => ({ rows: [] }));
+      const { rows: userRows } = await db(
+        'SELECT registered_device_fp FROM users WHERE id=$1', [req.user.id]
+      ).catch(() => ({ rows: [] }));
 
-      if (fpRows[0]) {
-        return res.status(403).json({
-          error: `This device already recorded attendance for ${fpRows[0].employee_name} today. One device can only be used for one employee per day.`,
-          blocked: true,
-        });
+      const registeredFp = userRows[0]?.registered_device_fp;
+
+      if (registeredFp) {
+        // Employee has a registered device — must match
+        if (registeredFp !== device_fp) {
+          return res.status(403).json({
+            error: 'Attendance can only be marked from your registered mobile device. Contact your Org Admin to reset your device.',
+            blocked: true,
+            wrong_device: true,
+          });
+        }
+      } else {
+        // First time — register this device automatically
+        await db(
+          'UPDATE users SET registered_device_fp=$1, registered_device_at=now() WHERE id=$2',
+          [device_fp, req.user.id]
+        ).catch(() => {});
       }
 
-      // Check time gap — if this device checked out an employee in last 60 mins
-      const { rows: gapRows } = await db(`
-        SELECT ar.check_out_time, u.name AS employee_name
+      // Also check: another employee currently checked in on same device
+      const istDate = nowIST().date;
+      const { rows: activeRows } = await db(`
+        SELECT u.name AS employee_name
         FROM attendance_records ar
         JOIN users u ON u.id = ar.employee_id
         WHERE ar.device_fp = $1
           AND ar.date::text = $2
           AND ar.employee_id != $3
-          AND ar.check_out_time IS NOT NULL
-          AND ar.check_out_time > (NOW() AT TIME ZONE 'Asia/Kolkata' - INTERVAL '60 minutes')::time
+          AND ar.check_out_time IS NULL
+          AND ar.check_in_time IS NOT NULL
         LIMIT 1
       `, [device_fp, istDate, req.user.id]).catch(() => ({ rows: [] }));
 
-      if (gapRows[0]) {
+      if (activeRows[0]) {
         return res.status(403).json({
-          error: `This device was used for ${gapRows[0].employee_name} less than 60 minutes ago. Please wait before marking attendance for another employee.`,
+          error: `${activeRows[0].employee_name} is currently checked in on this device. They must check out first.`,
           blocked: true,
         });
       }
@@ -701,6 +748,13 @@ app.post('/api/attendance/checkin', auth(['employee']), async (req, res) => {
       await db(`INSERT INTO late_approvals (org_id,record_id,employee_id,manager_id,late_mins,shift_name)
                 VALUES ($1,$2,$3,$4,$5,$6)`,
         [oid, rows[0].id, req.user.id, mgr[0]?.id || null, Math.max(0, lateMins), shift.name]);
+      // Notify manager of late arrival
+      if (mgr[0]?.id) {
+        await createNotification(mgr[0].id, oid,
+          '⏰ Late Arrival Approval',
+          `${req.user.name} is ${Math.max(0,lateMins)} minutes late — needs your approval`,
+          'approval_request', rows[0].id);
+      }
     }
 
     res.json({ record: rows[0], isLate, lateMins: Math.max(0, lateMins), needsApproval, shiftName: shift.name });
@@ -802,10 +856,16 @@ app.get('/api/approvals', auth(['super_admin', 'org_admin', 'branch_admin']), as
 app.patch('/api/approvals/:id', auth(['super_admin', 'org_admin', 'branch_admin']), async (req, res) => {
   try {
     const { rows } = await db(
-      'UPDATE late_approvals SET status=$1,decided_by=$2,decided_at=now() WHERE id=$3 RETURNING record_id',
+      'UPDATE late_approvals SET status=$1,decided_by=$2,decided_at=now() WHERE id=$3 RETURNING record_id,employee_id,org_id',
       [req.body.status, req.user.id, req.params.id]);
     await db('UPDATE attendance_records SET approval_status=$1 WHERE id=$2',
       [req.body.status, rows[0].record_id]);
+    // Notify employee of decision
+    const decision = req.body.status === 'approved' ? '✅ Approved' : '❌ Rejected';
+    await createNotification(rows[0].employee_id, rows[0].org_id,
+      `Late arrival ${decision}`,
+      `Your late arrival request has been ${req.body.status} by ${req.user.name}`,
+      'approval_decision', req.params.id);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1074,6 +1134,15 @@ app.post('/api/advances', auth(), async (req, res) => {
        VALUES ($1,$2,$3,$4,$5,$6,'pending') RETURNING *`,
       [oid, req.user.id, amount, reason, needed_by_date || null, is_emergency || false]
     );
+    // Notify org admin
+    const { rows: orgAdmins } = await db(
+      `SELECT id FROM users WHERE org_id=$1 AND role='org_admin' AND is_active=true`, [oid]);
+    for (const admin of orgAdmins) {
+      await createNotification(admin.id, oid,
+        `${is_emergency ? '🚨 Emergency' : '💰 New'} Advance Request`,
+        `${req.user.name} requested ${new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(amount)}`,
+        'advance_request', rows[0].id);
+    }
     res.json(rows[0]);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1138,6 +1207,133 @@ app.get('/api/advances/recoveries', auth(['super_admin', 'org_admin', 'branch_ad
     );
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ============================================================
+// PUSH NOTIFICATIONS & SUBSCRIPTIONS
+// ============================================================
+
+// GET VAPID public key
+app.get('/api/push/vapid-public-key', (req, res) => {
+  res.json({ key: process.env.VAPID_PUBLIC_KEY || '' });
+});
+
+// POST subscribe to push
+app.post('/api/push/subscribe', auth(), async (req, res) => {
+  try {
+    const { endpoint, keys } = req.body;
+    await db(`
+      INSERT INTO push_subscriptions (user_id, org_id, endpoint, p256dh, auth, user_agent)
+      VALUES ($1,$2,$3,$4,$5,$6)
+      ON CONFLICT (user_id, endpoint) DO UPDATE SET p256dh=$4, auth=$5
+    `, [req.user.id, req.user.org_id, endpoint, keys.p256dh, keys.auth, req.headers['user-agent']]);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE unsubscribe
+app.delete('/api/push/subscribe', auth(), async (req, res) => {
+  try {
+    await db('DELETE FROM push_subscriptions WHERE user_id=$1 AND endpoint=$2',
+      [req.user.id, req.body.endpoint]);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET notifications for current user
+app.get('/api/notifications', auth(), async (req, res) => {
+  try {
+    const { rows } = await db(`
+      SELECT * FROM notifications WHERE user_id=$1
+      ORDER BY created_at DESC LIMIT 50
+    `, [req.user.id]);
+    res.json(rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET unread count
+app.get('/api/notifications/count', auth(), async (req, res) => {
+  try {
+    const { rows } = await db(
+      'SELECT COUNT(*) AS count FROM notifications WHERE user_id=$1 AND is_read=false',
+      [req.user.id]);
+    res.json({ count: parseInt(rows[0]?.count || 0) });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// PATCH mark notifications as read
+app.patch('/api/notifications/read', auth(), async (req, res) => {
+  try {
+    await db('UPDATE notifications SET is_read=true WHERE user_id=$1', [req.user.id]);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ============================================================
+// DEVICE MANAGEMENT
+// ============================================================
+
+// GET employees with registered devices (for admin)
+app.get('/api/devices', auth(['super_admin','org_admin']), async (req, res) => {
+  try {
+    const oid = orgId(req);
+    const { rows } = await db(`
+      SELECT u.id, u.name, u.phone, u.designation, b.name AS branch_name,
+             u.registered_device_fp, u.registered_device_at
+      FROM users u
+      LEFT JOIN branches b ON b.id = u.branch_id
+      WHERE u.org_id=$1 AND u.is_active=true AND u.role NOT IN ('super_admin','org_admin')
+      ORDER BY u.name
+    `, [oid]);
+    res.json(rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// PATCH reset employee device
+app.patch('/api/devices/:employee_id/reset', auth(['super_admin','org_admin']), async (req, res) => {
+  try {
+    await db(
+      'UPDATE users SET registered_device_fp=NULL, registered_device_at=NULL WHERE id=$1',
+      [req.params.employee_id]);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ============================================================
+// DEVICE FINGERPRINT MANAGEMENT
+// ============================================================
+
+app.get('/api/device-blocks', auth(['super_admin','org_admin']), async (req, res) => {
+  try {
+    const oid = orgId(req);
+    const { rows } = await db(`
+      SELECT ar.device_fp,
+             array_agg(DISTINCT u.name) AS employees,
+             array_agg(DISTINCT ar.employee_id) AS employee_ids,
+             COUNT(DISTINCT ar.employee_id) AS unique_employees
+      FROM attendance_records ar
+      JOIN users u ON u.id = ar.employee_id
+      WHERE ar.org_id=$1 AND ar.date::text=CURRENT_DATE::text
+        AND ar.device_fp IS NOT NULL
+      GROUP BY ar.device_fp
+      ORDER BY unique_employees DESC
+    `, [oid]);
+    res.json(rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/api/device-blocks/clear', auth(['super_admin','org_admin']), async (req, res) => {
+  try {
+    const oid = orgId(req);
+    const { employee_id, clear_all, date } = req.body;
+    const clearDate = date || new Date().toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'});
+    if (clear_all) {
+      await db('UPDATE attendance_records SET device_fp=NULL WHERE org_id=$1 AND date::text=$2', [oid, clearDate]);
+      return res.json({ ok: true, message: 'All fingerprints cleared for ' + clearDate });
+    }
+    await db('UPDATE attendance_records SET device_fp=NULL WHERE employee_id=$1 AND date::text=$2', [employee_id, clearDate]);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 // ============================================================

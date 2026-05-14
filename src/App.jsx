@@ -151,6 +151,7 @@ const nowT  = () => new Date().toLocaleTimeString("en-GB", {timeZone:"Asia/Kolka
 const toM   = t => { if(!t) return 0; const str=String(t).slice(0,5); const[h,m]=str.split(":").map(Number); return h*60+m; };
 const pad   = n => String(n).padStart(2,"0");
 const fmtD  = ds => { const c=ds?String(ds).split("T")[0]:""; if(!c)return"—"; return new Date(c+"T12:00:00").toLocaleDateString("en-IN",{day:"numeric",month:"short",weekday:"short"}); };
+const isMobile = () => /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && window.innerWidth < 1024);
 const fmtDF = ds => { const c=ds?String(ds).split("T")[0]:""; if(!c)return"—"; return new Date(c+"T12:00:00").toLocaleDateString("en-IN",{day:"numeric",month:"long",year:"numeric"}); };
 
 function shiftMins(sh) { if(!sh)return 480; const s=toM(sh.start_time||sh.start),e=toM(sh.end_time||sh.end); return(e>s?e-s:1440-s+e)-(sh.break_mins||sh.breakMins||0); }
@@ -255,6 +256,8 @@ export default function App() {
     if(u.role==="super_admin") setPage("sa_orgs");
     else if(u.role==="employee") setPage("home");
     else setPage("adm_home");
+    // Register push notifications
+    registerPush(u.id);
   };
 
   const logout = () => {
@@ -445,12 +448,19 @@ function EmpHome({user, branch, todayAtt, loading, onScan}) {
         ))}
       </div>
 
-      <button onClick={onScan} disabled={status==="done"||loading}
+      {isMobile()
+        ? <button onClick={onScan} disabled={status==="done"||loading}
         style={{width:"100%",background:status==="done"?C.gr300:`linear-gradient(135deg,${C.g700},${C.g500})`,border:"none",borderRadius:20,padding:"20px",cursor:status==="done"?"not-allowed":"pointer",color:C.white,display:"flex",flexDirection:"column",alignItems:"center",gap:6,animation:status!=="done"?"glow 3s infinite":"none",marginBottom:18}}>
         <span style={{fontSize:32}}>📷</span>
-        <span style={{fontSize:16,fontWeight:800}}>{status==="out"?"Scan to Check In":status==="in"?"Scan to Check Out":"Day Complete ✓"}</span>
+        <span style={{fontSize:16,fontWeight:800}}>{status==="out"?"Scan to Check In — Shift 1":status==="in"?"Scan to Check Out":status==="between"?"Scan to Check In — Shift 2":"Day Complete ✓"}</span>
         <span style={{fontSize:12,opacity:0.75}}>Geo-fenced · Tap to mark attendance</span>
       </button>
+        : (status!=="done"&&<div style={{background:"#f0faf4",border:"1.5px dashed #86efac",borderRadius:18,padding:"20px",textAlign:"center",marginBottom:18}}>
+            <p style={{fontSize:24,marginBottom:6}}>💻</p>
+            <p style={{color:"#15803d",fontWeight:700,fontSize:14}}>Use your mobile phone</p>
+            <p style={{color:"#6b7280",fontSize:12}}>Attendance can only be marked from a mobile device</p>
+          </div>)
+      }
 
       {stats&&(
         <div style={{background:C.white,borderRadius:20,padding:18,boxShadow:`0 2px 12px ${C.g300}44`}}>
@@ -1048,6 +1058,7 @@ function StaffForm({emp, branches, shifts, activeOrgId, user, notify, onSave, on
         <button onClick={onCancel} style={{...S.outline,flex:1}}>Cancel</button>
       </div>
       {isEdit&&<ResetPasswordBox empId={emp.id} empName={emp.name} notify={notify}/>}
+      {isEdit&&(user.role==="super_admin"||user.role==="org_admin")&&<DeviceResetBox empId={emp.id} empName={emp.name} notify={notify}/>}
     </div>
   );
 }
@@ -1451,6 +1462,7 @@ function AdminSettings({user, notify, activeOrgId}) {
           <button style={S.btn} onClick={addBranch}>Add branch</button>
         </div>
       )}
+      {(user.role==="super_admin"||user.role==="org_admin")&&<DeviceBlockManager notify={notify} activeOrgId={activeOrgId}/>}
     </div>
   );
 }
@@ -1468,6 +1480,7 @@ function TopBar({user, onLogout, orgId}) {
           <p style={{color:C.g800,fontSize:13,fontWeight:700}}>{user.name?.split(" ")[0]}</p>
           <p style={{color:C.gr500,fontSize:9,textTransform:"uppercase",letterSpacing:0.5}}>{ROLE_CFG[user.role]?.label}</p>
         </div>
+        <NotificationBell user={user}/>
         <button onClick={onLogout} style={{background:C.g100,border:"none",borderRadius:10,width:34,height:34,cursor:"pointer",color:C.g700,fontWeight:700,fontSize:13}}>↩</button>
       </div>
     </div>
@@ -3007,6 +3020,228 @@ function BranchAdminPersonalView({user, notify, page, setPage}) {
       <div style={{flex:1,overflowY:"auto",paddingBottom:80}}>{empPages[page]||empPages.home}</div>
       <BottomNav items={empNav} page={page} setPage={setPage}/>
     </>
+  );
+}
+
+
+// ── DEVICE BLOCK MANAGER ─────────────────────────────────────
+function DeviceBlockManager({notify, activeOrgId}) {
+  const [blocks,setBlocks]=useState([]);
+  const [employees,setEmployees]=useState([]);
+  const [loading,setLoading]=useState(false);
+  const [selEmp,setSelEmp]=useState("");
+  const [show,setShow]=useState(false);
+
+  const load=async()=>{
+    setLoading(true);
+    try{
+      const [b,e]=await Promise.all([
+        GET("/api/device-blocks",{org_id:activeOrgId}),
+        GET("/api/employees",{org_id:activeOrgId}),
+      ]);
+      setBlocks(b||[]);
+      setEmployees((e||[]).filter(x=>x.role==="employee"||x.role==="branch_admin"));
+    }catch(err){notify(err.message,"error");}
+    finally{setLoading(false);}
+  };
+
+  const clearOne=async(empId)=>{
+    try{await PATCH("/api/device-blocks/clear",{employee_id:empId,org_id:activeOrgId});notify("Device block cleared ✓");load();}
+    catch(err){notify(err.message,"error");}
+  };
+
+  const clearAll=async()=>{
+    if(!window.confirm("Clear all device fingerprints for today?")) return;
+    try{await PATCH("/api/device-blocks/clear",{clear_all:true,org_id:activeOrgId});notify("All blocks cleared ✓");load();}
+    catch(err){notify(err.message,"error");}
+  };
+
+  return(
+    <div style={{background:C.white,borderRadius:20,padding:20,marginTop:16,boxShadow:`0 2px 10px ${C.g300}33`}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+        <p style={{color:C.g800,fontWeight:800,fontSize:15}}>🔒 Device Blocks</p>
+        <button onClick={()=>{setShow(!show);if(!show)load();}} style={{background:C.g100,border:"none",borderRadius:8,padding:"6px 12px",cursor:"pointer",color:C.g700,fontWeight:700,fontSize:12}}>{show?"Hide":"Manage"}</button>
+      </div>
+      <p style={{color:C.gr500,fontSize:12,marginBottom:show?12:0}}>Clear device block if an employee can't mark attendance</p>
+      {show&&(
+        <div>
+          {loading?<Spinner/>:(
+            <>
+              {blocks.filter(b=>Number(b.unique_employees)>1).length>0&&(
+                <div style={{background:"#fee2e2",borderRadius:12,padding:12,marginBottom:12}}>
+                  <p style={{color:C.red,fontWeight:700,fontSize:13,marginBottom:6}}>⚠ Shared device detected today</p>
+                  {blocks.filter(b=>Number(b.unique_employees)>1).map((b,i)=>(
+                    <p key={i} style={{color:C.red,fontSize:12}}>Same device: {Array.isArray(b.employees)?b.employees.join(", "):b.employees}</p>
+                  ))}
+                </div>
+              )}
+              <label style={S.label}>Clear block for specific employee</label>
+              <select style={S.select} value={selEmp} onChange={e=>setSelEmp(e.target.value)}>
+                <option value="">Select employee</option>
+                {employees.map(e=><option key={e.id} value={e.id}>{e.name} — {e.branch_name}</option>)}
+              </select>
+              <div style={{display:"flex",gap:8}}>
+                <button style={{...S.btn,flex:1,background:C.amber,padding:"10px"}} onClick={()=>{if(!selEmp){notify("Select employee","error");return;}clearOne(selEmp);}}>🔓 Clear employee</button>
+                <button style={{...S.btn,flex:1,background:C.red,padding:"10px"}} onClick={clearAll}>🗑 Clear all today</button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// ── NOTIFICATION BELL ─────────────────────────────────────────
+function NotificationBell({user}) {
+  const [count, setCount] = useState(0);
+  const [notifs, setNotifs] = useState([]);
+  const [open, setOpen] = useState(false);
+
+  const loadCount = async () => {
+    try {
+      const r = await GET("/api/notifications/count");
+      setCount(r.count || 0);
+      // Update PWA badge
+      if('serviceWorker' in navigator) {
+        const reg = await navigator.serviceWorker.ready.catch(()=>null);
+        reg?.active?.postMessage({type:'SET_BADGE', count: r.count||0});
+      }
+      if('setAppBadge' in navigator) navigator.setAppBadge(r.count||0).catch(()=>{});
+    } catch(e) {}
+  };
+
+  const loadNotifs = async () => {
+    try {
+      const r = await GET("/api/notifications");
+      setNotifs(r||[]);
+    } catch(e) {}
+  };
+
+  const markRead = async () => {
+    try {
+      await PATCH("/api/notifications/read", {});
+      setCount(0);
+      if('clearAppBadge' in navigator) navigator.clearAppBadge().catch(()=>{});
+      if('serviceWorker' in navigator) {
+        const reg = await navigator.serviceWorker.ready.catch(()=>null);
+        reg?.active?.postMessage({type:'CLEAR_BADGE'});
+      }
+      loadNotifs();
+    } catch(e) {}
+  };
+
+  useEffect(() => {
+    loadCount();
+    const interval = setInterval(loadCount, 30000); // poll every 30s
+    return () => clearInterval(interval);
+  }, []);
+
+  const TYPE_ICON = {
+    approval_request: '⏰', approval_decision: '✅',
+    advance_request: '💰', shift_request: '🔄',
+  };
+
+  return(
+    <div style={{position:"relative"}}>
+      <button onClick={()=>{setOpen(!open);if(!open){loadNotifs();markRead();}}}
+        style={{background:"rgba(255,255,255,0.15)",border:"none",borderRadius:12,width:38,height:38,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",position:"relative"}}>
+        <span style={{fontSize:18}}>🔔</span>
+        {count>0&&<span style={{position:"absolute",top:-4,right:-4,background:"#ef4444",color:"#fff",fontSize:10,fontWeight:700,borderRadius:10,minWidth:18,height:18,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 4px"}}>{count>9?"9+":count}</span>}
+      </button>
+      {open&&(
+        <div style={{position:"absolute",right:0,top:46,width:300,background:"#fff",borderRadius:16,boxShadow:"0 8px 32px rgba(0,0,0,0.18)",zIndex:200,maxHeight:400,overflowY:"auto"}}>
+          <div style={{padding:"12px 16px",borderBottom:"1px solid #f0faf4",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <p style={{color:"#166534",fontWeight:800,fontSize:14}}>Notifications</p>
+            <button onClick={()=>setOpen(false)} style={{background:"none",border:"none",cursor:"pointer",color:"#6b7280",fontSize:16}}>✕</button>
+          </div>
+          {notifs.length===0
+            ? <p style={{color:"#6b7280",fontSize:13,padding:"20px",textAlign:"center"}}>No notifications</p>
+            : notifs.map(n=>(
+              <div key={n.id} style={{padding:"12px 16px",borderBottom:"1px solid #f9fafb",background:n.is_read?"#fff":"#f0faf4"}}>
+                <div style={{display:"flex",gap:8,alignItems:"flex-start"}}>
+                  <span style={{fontSize:18}}>{TYPE_ICON[n.type]||"🔔"}</span>
+                  <div style={{flex:1}}>
+                    <p style={{color:"#111827",fontWeight:700,fontSize:13}}>{n.title}</p>
+                    <p style={{color:"#6b7280",fontSize:12}}>{n.body}</p>
+                    <p style={{color:"#9ca3af",fontSize:11,marginTop:2}}>{new Date(n.created_at).toLocaleString("en-IN",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}</p>
+                  </div>
+                </div>
+              </div>
+            ))
+          }
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── SERVICE WORKER & PUSH REGISTRATION ───────────────────────
+async function registerPush(userId) {
+  try {
+    if(!('serviceWorker' in navigator)||!('PushManager' in window)) return;
+    const reg = await navigator.serviceWorker.register('/sw.js');
+    const vapidRes = await GET("/api/push/vapid-public-key");
+    if(!vapidRes.key) return;
+    const permission = await Notification.requestPermission();
+    if(permission !== 'granted') return;
+    const existing = await reg.pushManager.getSubscription();
+    if(existing) {
+      await POST("/api/push/subscribe", existing.toJSON());
+      return;
+    }
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: vapidRes.key,
+    });
+    await POST("/api/push/subscribe", sub.toJSON());
+  } catch(e) { console.log('Push registration skipped:', e.message); }
+}
+
+
+// ── DEVICE RESET BOX (Admin) ──────────────────────────────────
+function DeviceResetBox({empId, empName, notify}) {
+  const [show, setShow] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [hasDevice, setHasDevice] = useState(null);
+
+  useEffect(()=>{
+    if(show) {
+      GET("/api/devices").then(devs=>{
+        const emp = devs.find(d=>d.id===empId);
+        setHasDevice(!!emp?.registered_device_fp);
+      }).catch(()=>{});
+    }
+  },[show]);
+
+  const reset = async () => {
+    if(!window.confirm(`Reset registered device for ${empName}? They can register a new device on their next check-in.`)) return;
+    setLoading(true);
+    try {
+      await PATCH(`/api/devices/${empId}/reset`, {});
+      notify(`✅ Device reset for ${empName} — they can register a new device`);
+      setShow(false); setHasDevice(false);
+    } catch(e) { notify(e.message,"error"); }
+    finally { setLoading(false); }
+  };
+
+  return(
+    <div style={{marginTop:8,background:"#eff6ff",border:"1px solid #bfdbfe",borderRadius:14,padding:14}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <p style={{color:"#1d4ed8",fontWeight:700,fontSize:13}}>📱 Registered Device</p>
+        <button onClick={()=>setShow(!show)} style={{background:"#dbeafe",border:"1px solid #bfdbfe",borderRadius:8,padding:"4px 12px",cursor:"pointer",color:"#1d4ed8",fontWeight:700,fontSize:12}}>{show?"Hide":"View"}</button>
+      </div>
+      {show&&(
+        <div style={{marginTop:10}}>
+          <p style={{color:"#3b82f6",fontSize:13,marginBottom:10}}>
+            {hasDevice===null?"Checking..." : hasDevice ? "✅ Device registered — employee can check in" : "⚠ No device registered — will register on next check-in"}
+          </p>
+          {hasDevice&&<button style={{...S.btn,background:"#1d4ed8",padding:"10px"}} onClick={reset} disabled={loading}>{loading?"Resetting...":"🔄 Reset device"}</button>}
+          <p style={{color:"#6b7280",fontSize:11,marginTop:6}}>After reset, employee must use their phone to check in — that phone becomes their new registered device</p>
+        </div>
+      )}
+    </div>
   );
 }
 
