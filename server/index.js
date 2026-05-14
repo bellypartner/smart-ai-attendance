@@ -325,29 +325,15 @@ app.post('/api/employees', auth(['super_admin', 'org_admin', 'branch_admin']), a
     else res.status(500).json({ error: e.message });
   }
 });
-app.delete('/api/employees/:id', auth(['super_admin', 'org_admin']), async (req, res) => {
-  try {
-    const { rows } = await db('SELECT role, name FROM users WHERE id=$1', [req.params.id]);
-    if (!rows[0]) return res.status(404).json({ error: 'Employee not found' });
-    if (rows[0].role === 'super_admin') return res.status(403).json({ error: 'Cannot delete super admin' });
-    if (rows[0].role === 'org_admin' && req.user.role !== 'super_admin') {
-      return res.status(403).json({ error: 'Only Super Admin can delete an Org Admin' });
-    }
-    // Hard delete — removes from DB completely
-    await db('DELETE FROM users WHERE id=$1', [req.params.id]);
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
 
 app.patch('/api/employees/:id', auth(['super_admin', 'org_admin', 'branch_admin']), async (req, res) => {
   try {
     const { name, phone, branch_id, designation, salary, default_shift_id, is_active,
       status, relieving_date, relieving_reason, manager_id,
-      date_of_joining, employee_code, working_days_type } = req.body;
+      date_of_joining, employee_code, working_days_type, job_category_id } = req.body;
     if (is_active === false && req.user.role === 'branch_admin') {
       return res.status(403).json({ error: 'Only Org Admin or Super Admin can remove staff' });
     }
-    // Fetch current values so partial updates don't null out fields
     const { rows: cur } = await db('SELECT * FROM users WHERE id=$1', [req.params.id]);
     if (!cur[0]) return res.status(404).json({ error: 'Employee not found' });
     const c = cur[0];
@@ -355,22 +341,24 @@ app.patch('/api/employees/:id', auth(['super_admin', 'org_admin', 'branch_admin'
       `UPDATE users SET name=$1, phone=$2, branch_id=$3, designation=$4, salary=$5,
         default_shift_id=$6, is_active=$7, status=$8, relieving_date=$9,
         relieving_reason=$10, manager_id=$11, date_of_joining=$12,
-        employee_code=$13, working_days_type=$14, updated_at=now() WHERE id=$15`,
+        employee_code=$13, working_days_type=$14, job_category_id=$15,
+        updated_at=now() WHERE id=$16`,
       [
-        name           ?? c.name,
-        phone          ?? c.phone,
-        branch_id      ?? c.branch_id,
-        designation    ?? c.designation,
-        salary         ?? c.salary,
-        default_shift_id !== undefined ? (default_shift_id || null) : c.default_shift_id,
-        is_active      ?? c.is_active,
-        status         ?? c.status,
-        relieving_date !== undefined ? (relieving_date || null) : c.relieving_date,
-        relieving_reason !== undefined ? (relieving_reason || null) : c.relieving_reason,
-        manager_id     !== undefined ? (manager_id || null) : c.manager_id,
-        date_of_joining !== undefined ? (date_of_joining || null) : c.date_of_joining,
-        employee_code  !== undefined ? (employee_code || null) : c.employee_code,
+        name ?? c.name,
+        phone ?? c.phone,
+        branch_id ?? c.branch_id,
+        designation ?? c.designation,
+        salary ?? c.salary,
+        default_shift_id !== undefined ? (default_shift_id||null) : c.default_shift_id,
+        is_active ?? c.is_active,
+        status ?? c.status,
+        relieving_date !== undefined ? (relieving_date||null) : c.relieving_date,
+        relieving_reason !== undefined ? (relieving_reason||null) : c.relieving_reason,
+        manager_id !== undefined ? (manager_id||null) : c.manager_id,
+        date_of_joining !== undefined ? (date_of_joining||null) : c.date_of_joining,
+        employee_code !== undefined ? (employee_code||null) : c.employee_code,
         working_days_type ?? c.working_days_type ?? 30,
+        job_category_id !== undefined ? (job_category_id||null) : c.job_category_id,
         req.params.id
       ]
     );
@@ -819,12 +807,23 @@ app.post('/api/attendance/checkout', auth(['employee']), async (req, res) => {
       if(over>240){checkoutTime=String(rec.shift_end).slice(0,5);capped=true;}
     }
     const workedMins=Math.max(0,toMins(checkoutTime)-toMins(String(rec.check_in_time||"").slice(0,5)));
+    // Detect early checkout
+    let isEarly=false, earlyMins=0;
+    if(rec.shift_end) {
+      const shiftEndM = toMins(String(rec.shift_end).slice(0,5));
+      const coMins = toMins(checkoutTime);
+      if(coMins < shiftEndM) { isEarly=true; earlyMins=shiftEndM-coMins; }
+    }
     await db(
-      `UPDATE attendance_records SET check_out_time=$1,worked_mins=$2,updated_at=now(),
-       notes=CASE WHEN $3 THEN 'Auto-capped: checked out 4h+ after shift end' ELSE notes END WHERE id=$4`,
-      [checkoutTime,workedMins,capped,rec.id]
+      `UPDATE attendance_records SET check_out_time=$1,worked_mins=$2,
+       checkout_type='manual', is_auto_checkout=false,
+       is_early_checkout=$3, early_mins=$4,
+       notes=CASE WHEN $5 THEN 'Auto-capped: checked out 4h+ after shift end' ELSE notes END
+       WHERE id=$6`,
+      [checkoutTime,workedMins,isEarly,earlyMins,capped,rec.id]
     );
-    res.json({ok:true,worked_mins:workedMins,slot:rec.slot||1,capped,message:capped?`Checkout capped at shift end (${checkoutTime})`:null});
+    res.json({ok:true,worked_mins:workedMins,slot:rec.slot||1,capped,is_early:isEarly,early_mins:earlyMins,
+      message:capped?`Checkout capped at shift end (${checkoutTime})`:isEarly?`Early checkout — ${earlyMins} mins before shift end`:null});
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1031,13 +1030,34 @@ app.get('/api/my-salary', auth(['employee']), async (req, res) => {
     const s = settRows[0] || {};
     const salary = Number(uRows[0]?.salary || 0);
     const workingDays = uRows[0]?.working_days_type || s.working_days_per_month || 26;
+    // Get job category for this employee
+    const { rows: catRows } = await db(`
+      SELECT jc.* FROM job_categories jc
+      JOIN users u ON u.job_category_id = jc.id
+      WHERE u.id=$1
+    `, [req.user.id]).catch(()=>({rows:[]}));
+    const cat = catRows[0];
+
     const presentDays = att.filter(a => a.check_in_time).length;
     const lateDays = att.filter(a => a.is_late && a.approval_status !== 'rejected').length;
+    const clUsed = lvs.filter(l => l.type === 'casual').length;
+    const slUsed = lvs.filter(l => l.type === 'sick').length;
     const unauthLeaves = lvs.filter(l => l.type === 'unauthorized').length;
     const noShows = lvs.filter(l => l.type === 'noshow').length;
-    const casualUsed = lvs.filter(l => l.type === 'casual').length;
-    const dailyRate = salary / workingDays;
+    const earlyCheckouts = att.filter(a => a.is_early_checkout && !a.early_penalty_waived).length;
+    const earlyMinsTotal = att.filter(a=>a.is_early_checkout&&!a.early_penalty_waived).reduce((s,a)=>s+Number(a.early_mins||0),0);
+
+    // Category-based leave eligibility
+    const clAllowed = cat?.cl_per_month || 0;
+    const slAllowed = cat?.sl_per_month || 0;
+    const clExcess = Math.max(0, clUsed - clAllowed);
+    const slExcess = Math.max(0, slUsed - slAllowed);
+
+    const divisor = cat?.working_days_type || workingDays;
+    const dailyRate = salary / divisor;
+    const hourlyRate = dailyRate / 8;
     const earnedGross = presentDays * dailyRate;
+
     const monthlyGraceDays = s.monthly_grace_days || 3;
     const chronicThreshold = s.chronic_late_threshold || 6;
     const normalLates = Math.max(0, Math.min(lateDays, monthlyGraceDays));
@@ -1046,16 +1066,23 @@ app.get('/api/my-salary', auth(['employee']), async (req, res) => {
       normalLates * (s.late_deduction_per_occ || 50) +
       (excessLates > 0 ? excessLates * (s.excess_late_deduction || 100) : 0) +
       (lateDays >= chronicThreshold ? excessLates * (s.chronic_late_deduction || 200) : 0);
-    const leaveDeductions = unauthLeaves * (s.unauth_leave_penalty || 200);
-    const noShowDeductions = noShows * (s.no_show_penalty || 250);
+
+    const leaveDeductions = (unauthLeaves * dailyRate) + (clExcess * dailyRate) + (slExcess * dailyRate);
+    const noShowDeductions = noShows * dailyRate;
+    const earlyDeductions = earlyCheckouts * (s.early_checkout_flat_penalty || 50) +
+      Math.round((earlyMinsTotal / 60) * hourlyRate);
     const advanceDeduction = Number(advRows[0]?.monthly_deduction || 0);
-    const totalDeductions = lateDeductions + leaveDeductions + noShowDeductions + advanceDeduction;
+    const totalDeductions = lateDeductions + leaveDeductions + noShowDeductions + earlyDeductions + advanceDeduction;
 
     res.json({
-      salary, workingDays, presentDays, lateDays, casualUsed, unauthLeaves, noShows,
-      normalLates, excessLates, dailyRate, earnedGross,
-      lateDeductions, leaveDeductions, noShowDeductions, advanceDeduction,
+      salary, workingDays: divisor, presentDays, lateDays, clUsed, slUsed,
+      clAllowed, slAllowed, clExcess, slExcess,
+      unauthLeaves, noShows, normalLates, excessLates,
+      dailyRate, earnedGross, lateDeductions,
+      leaveDeductions, noShowDeductions, earlyDeductions,
+      earlyCheckouts, advanceDeduction,
       totalDeductions, netEarned: Math.max(0, earnedGross - totalDeductions),
+      category: cat?.name || null,
     });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -1300,6 +1327,19 @@ app.patch('/api/notifications/read', auth(), async (req, res) => {
 });
 
 // ============================================================
+// EARLY CHECKOUT WAIVE
+// ============================================================
+
+app.patch('/api/attendance/:id/waive-early', auth(['super_admin','org_admin','branch_admin']), async (req, res) => {
+  try {
+    await db(
+      'UPDATE attendance_records SET early_penalty_waived=true, early_waived_by=$1 WHERE id=$2',
+      [req.user.id, req.params.id]);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ============================================================
 // DEVICE MANAGEMENT
 // ============================================================
 
@@ -1367,15 +1407,102 @@ app.patch('/api/device-blocks/clear', auth(['super_admin','org_admin']), async (
 });
 
 // ============================================================
-// AUTO-CHECKOUT CRON
+// JOB CATEGORIES
+// ============================================================
+
+app.get('/api/job-categories', auth(), async (req, res) => {
+  try {
+    const oid = orgId(req);
+    const { rows } = await db(
+      'SELECT * FROM job_categories WHERE org_id=$1 AND is_active=true ORDER BY name', [oid]);
+    res.json(rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/job-categories', auth(['super_admin','org_admin']), async (req, res) => {
+  try {
+    const oid = orgId(req);
+    const { name, working_days_type, sunday_off, cl_per_month, sl_per_month, paid_off_days, description } = req.body;
+    const { rows } = await db(
+      `INSERT INTO job_categories (org_id,name,working_days_type,sunday_off,cl_per_month,sl_per_month,paid_off_days,description)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [oid, name, working_days_type||26, sunday_off!==false, cl_per_month||0, sl_per_month||0, paid_off_days||0, description||null]);
+    res.json(rows[0]);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/api/job-categories/:id', auth(['super_admin','org_admin']), async (req, res) => {
+  try {
+    const { name, working_days_type, sunday_off, cl_per_month, sl_per_month, paid_off_days, description, is_active } = req.body;
+    const { rows: cur } = await db('SELECT * FROM job_categories WHERE id=$1', [req.params.id]);
+    if(!cur[0]) return res.status(404).json({ error: 'Category not found' });
+    const c = cur[0];
+    await db(
+      `UPDATE job_categories SET name=$1,working_days_type=$2,sunday_off=$3,cl_per_month=$4,
+       sl_per_month=$5,paid_off_days=$6,description=$7,is_active=$8 WHERE id=$9`,
+      [name??c.name, working_days_type??c.working_days_type, sunday_off??c.sunday_off,
+       cl_per_month??c.cl_per_month, sl_per_month??c.sl_per_month,
+       paid_off_days??c.paid_off_days, description??c.description,
+       is_active??c.is_active, req.params.id]);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/job-categories/:id', auth(['super_admin','org_admin']), async (req, res) => {
+  try {
+    await db('UPDATE job_categories SET is_active=false WHERE id=$1', [req.params.id]);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ============================================================
+// AUTO-CHECKOUT CRON — with 15 min grace window
+// ============================================================
+
 // ============================================================
 
 app.post('/api/cron/auto-checkout', async (req, res) => {
   if (req.headers['x-cron-secret'] !== process.env.CRON_SECRET)
     return res.status(401).end();
   try {
-    await db('SELECT run_auto_checkout()');
-    res.json({ ok: true, ts: new Date() });
+    const { date, time } = nowIST();
+    // Get grace window from org settings (default 15 mins)
+    // Auto-checkout employees who checked in but not checked out
+    // and whose shift ended more than grace_mins ago
+    const { rows: toCheckout } = await db(`
+      SELECT ar.id, ar.employee_id, ar.org_id, ar.shift_id,
+             st.end_time, os.auto_checkout_grace_mins,
+             ar.check_in_time
+      FROM attendance_records ar
+      JOIN shift_templates st ON st.id = ar.shift_id
+      LEFT JOIN org_settings os ON os.org_id = ar.org_id
+      WHERE ar.date::text = $1
+        AND ar.check_in_time IS NOT NULL
+        AND ar.check_out_time IS NULL
+        AND (
+          -- shift end + grace period has passed
+          st.end_time::time + (COALESCE(os.auto_checkout_grace_mins,15) || ' minutes')::interval
+          < NOW() AT TIME ZONE 'Asia/Kolkata'
+        )
+    `, [date]);
+
+    let count = 0;
+    for (const rec of toCheckout) {
+      const checkoutTime = String(rec.end_time).slice(0,5);
+      const cinMins = toMins(String(rec.check_in_time).slice(0,5));
+      const endMins = toMins(checkoutTime);
+      const worked = Math.max(0, endMins - cinMins);
+      await db(`
+        UPDATE attendance_records
+        SET check_out_time=$1, worked_mins=$2,
+            is_auto_checkout=true, checkout_type='auto',
+            notes=COALESCE(notes||' | ','') || 'Auto checkout — employee did not manually check out',
+            updated_at=now()
+        WHERE id=$3
+      `, [checkoutTime, worked, rec.id]);
+      count++;
+    }
+    res.json({ ok: true, auto_checked_out: count, ts: new Date() });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

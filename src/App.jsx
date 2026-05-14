@@ -448,7 +448,8 @@ function EmpHome({user, branch, todayAtt, loading, onScan}) {
         ))}
       </div>
 
-      {isMobile()
+      {todayAtt?.cin&&!todayAtt?.cout&&<WorkingClock cinTime={todayAtt.cin.check_in_time}/>}
+            {isMobile()
         ? <button onClick={onScan} disabled={status==="done"||loading}
         style={{width:"100%",background:status==="done"?C.gr300:`linear-gradient(135deg,${C.g700},${C.g500})`,border:"none",borderRadius:20,padding:"20px",cursor:status==="done"?"not-allowed":"pointer",color:C.white,display:"flex",flexDirection:"column",alignItems:"center",gap:6,animation:status!=="done"?"glow 3s infinite":"none",marginBottom:18}}>
         <span style={{fontSize:32}}>📷</span>
@@ -482,6 +483,7 @@ function EmpHome({user, branch, todayAtt, loading, onScan}) {
 function EmpShifts({user, notify}) {
   const [schedules, setSchedules] = useState([]);
   const [shifts, setShifts] = useState([]);
+  const [categories, setCategories] = useState([]);
   const [requests, setRequests] = useState([]);
   const [tab, setTab] = useState("upcoming");
   const [loading, setLoading] = useState(true);
@@ -601,6 +603,9 @@ function EmpHistory({user, notify}) {
                 {cin?.shift_name&&<span style={{background:C.g100,color:C.g700,fontSize:10,padding:"2px 8px",borderRadius:20,fontWeight:700}}>{cin.shift_name}</span>}
                 {cin?.is_late&&<span style={{background:"#fffbeb",color:C.amber,fontSize:10,padding:"2px 8px",borderRadius:20,fontWeight:700}}>{cin.late_mins}m LATE</span>}
                 {cin?.admin_edited&&<span style={{background:"#ede9fe",color:C.violet,fontSize:10,padding:"2px 8px",borderRadius:20,fontWeight:700}}>EDITED</span>}
+                {cin?.is_auto_checkout&&<span style={{background:"#fef3c7",color:"#d97706",fontSize:10,padding:"2px 8px",borderRadius:20,fontWeight:700}}>🤖 AUTO</span>}
+                {cin?.is_early_checkout&&!cin?.early_penalty_waived&&<span style={{background:"#fee2e2",color:C.red,fontSize:10,padding:"2px 8px",borderRadius:20,fontWeight:700}}>⚡ EARLY -{cin.early_mins}m</span>}
+                {cin?.is_early_checkout&&cin?.early_penalty_waived&&<span style={{background:"#dcfce7",color:"#16a34a",fontSize:10,padding:"2px 8px",borderRadius:20,fontWeight:700}}>✅ WAIVED</span>}
               </div>
             </div>
             <div style={{display:"flex",gap:16}}>
@@ -640,7 +645,7 @@ function EmpSalary({user, notify}) {
           <div style={{background:C.g300,height:7,borderRadius:8,width:`${Math.min(100,((report.netEarned||0)/(user.salary||1))*100)}%`}}/>
         </div>
       </div>
-      {[["Days Present",report.presentDays],["Gross Earned",fmt(report.earnedGross||0)],["Late Deductions",`-${fmt(report.lateDeductions||0)}`],["Leave Penalties",`-${fmt(report.leaveDeductions||0)}`],["No-Show Penalties",`-${fmt(report.noShowDeductions||0)}`],["Net Earned",fmt(report.netEarned||0)]].map(([l,v])=>(
+      {[["Days Present",report.presentDays],["Gross Earned",fmt(report.earnedGross||0)],["Late Deductions",`-${fmt(report.lateDeductions||0)}`],["CL used/allowed",`${report.clUsed||0}/${report.clAllowed||0}`],["SL used/allowed",`${report.slUsed||0}/${report.slAllowed||0}`],["Leave Deductions",`-${fmt(report.leaveDeductions||0)}`],["No-Show",`-${fmt(report.noShowDeductions||0)}`],["Early Checkout",`-${fmt(report.earlyDeductions||0)}`],["Advance Recovery",`-${fmt(report.advanceDeduction||0)}`],["Net Earned",fmt(report.netEarned||0)]].map(([l,v])=>(
         <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"10px 0",borderBottom:`1px solid ${C.g50}`}}>
           <span style={{color:C.gr500,fontSize:14}}>{l}</span>
           <span style={{color:C.gr900,fontWeight:700,fontSize:14}}>{v}</span>
@@ -890,6 +895,7 @@ function AdminStaff({user, notify, activeOrgId}) {
   const [employees, setEmployees] = useState([]);
   const [branches, setBranches] = useState([]);
   const [shifts, setShifts] = useState([]);
+  const [categories, setCategories] = useState([]);
   const [tab, setTab] = useState("list");
   const [selected, setSelected] = useState(null);
   const [filterStatus, setFilterStatus] = useState("all");
@@ -899,8 +905,8 @@ function AdminStaff({user, notify, activeOrgId}) {
 
   const load = async () => {
     try {
-      const [e,b,s] = await Promise.all([GET("/api/employees",{org_id:activeOrgId}),GET("/api/branches",{org_id:activeOrgId}),GET("/api/shifts",{org_id:activeOrgId})]);
-      setEmployees(e||[]); setBranches(b||[]); setShifts(s||[]);
+      const [e,b,s,cat] = await Promise.all([GET("/api/employees",{org_id:activeOrgId}),GET("/api/branches",{org_id:activeOrgId}),GET("/api/shifts",{org_id:activeOrgId}),GET("/api/job-categories")]);
+      setEmployees(e||[]); setBranches(b||[]); setShifts(s||[]); setCategories(cat||[]);
     } catch(e){notify(e.message,"error");}
     finally{setLoading(false);}
   };
@@ -978,7 +984,7 @@ function AdminStaff({user, notify, activeOrgId}) {
         </div>
       )}
       {tab==="form"&&(
-        <StaffForm emp={selected} branches={branches} shifts={shifts} activeOrgId={activeOrgId} user={user} notify={notify}
+        <StaffForm emp={selected} branches={branches} shifts={shifts} categories={categories} activeOrgId={activeOrgId} user={user} notify={notify}
           onSave={async(data)=>{
             try{
               if(selected) await PATCH(`/api/employees/${selected.id}`,data);
@@ -1023,13 +1029,14 @@ function StatusBtn({emp, onChange}) {
   );
 }
 
-function StaffForm({emp, branches, shifts, activeOrgId, user, notify, onSave, onCancel}) {
+function StaffForm({emp, branches, shifts, categories, activeOrgId, user, notify, onSave, onCancel}) {
   const isEdit=!!emp;
   const [f,setF]=useState({
     name:emp?.name||"",phone:emp?.phone||"",password:"",branch_id:emp?.branch_id||branches[0]?.id||"",
     role:emp?.role||"employee",designation:emp?.designation||"",salary:emp?.salary||"",
     default_shift_id:emp?.default_shift_id||"",manager_id:emp?.manager_id||"",
     date_of_joining:emp?.date_of_joining?String(emp.date_of_joining).split('T')[0]:today(),employee_code:emp?.employee_code||"",
+    job_category_id:emp?.job_category_id||"",
   });
   const set=(k,v)=>setF(p=>({...p,[k]:v}));
   return(
@@ -1048,6 +1055,11 @@ function StaffForm({emp, branches, shifts, activeOrgId, user, notify, onSave, on
         <option value="employee">Employee</option>
         <option value="branch_admin">Branch Admin</option>
         {(user.role==="super_admin"||user.role==="org_admin")&&<option value="org_admin">Org Admin</option>}
+      </select>
+      <label style={S.label}>Job Category</label>
+      <select style={S.select} value={f.job_category_id} onChange={e=>set("job_category_id",e.target.value)}>
+        <option value="">No category assigned</option>
+        {(categories||[]).map(c=><option key={c.id} value={c.id}>{c.name} · {c.sunday_off?"Sun off":"7-day"} · CL:{c.cl_per_month} SL:{c.sl_per_month}</option>)}
       </select>
       <label style={S.label}>Default Shift</label>
       <select style={S.select} value={f.default_shift_id} onChange={e=>set("default_shift_id",e.target.value)}>
@@ -1463,6 +1475,7 @@ function AdminSettings({user, notify, activeOrgId}) {
         </div>
       )}
       {(user.role==="super_admin"||user.role==="org_admin")&&<DeviceBlockManager notify={notify} activeOrgId={activeOrgId}/>}
+      {(user.role==="super_admin"||user.role==="org_admin")&&<JobCategoriesManager notify={notify} activeOrgId={activeOrgId}/>}
     </div>
   );
 }
@@ -1850,6 +1863,13 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
                 style={{ background: "#fff", border: "1.5px solid #22c55e", borderRadius: 14, color: "#15803d", padding: "14px 20px", fontSize: 14, fontWeight: 700, cursor: "pointer", flex: 1 }}>
                 Cancel
               </button>
+            </div>
+            {editRec?.is_early_checkout&&!editRec?.early_penalty_waived&&(
+              <button style={{...S.btn,background:"#d97706",marginTop:8}}
+                onClick={async()=>{try{await PATCH(`/api/attendance/${editRec.id}/waive-early`,{});notify("Early checkout penalty waived ✓");setEditRec(null);await loadRecords();}catch(e){notify(e.message,"error");}}}>
+                ✅ Waive early checkout penalty
+              </button>
+            
             </div>
           </div>
         </div>
@@ -3241,6 +3261,150 @@ function DeviceResetBox({empId, empName, notify}) {
           <p style={{color:"#6b7280",fontSize:11,marginTop:6}}>After reset, employee must use their phone to check in — that phone becomes their new registered device</p>
         </div>
       )}
+    </div>
+  );
+}
+
+
+// ── JOB CATEGORIES MANAGER ────────────────────────────────────
+function JobCategoriesManager({notify, activeOrgId}) {
+  const [cats, setCats] = useState([]);
+  const [show, setShow] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState({name:"",working_days_type:26,sunday_off:true,cl_per_month:2,sl_per_month:1,paid_off_days:0,description:""});
+  const f=(k,v)=>setForm(p=>({...p,[k]:v}));
+
+  const load=async()=>{
+    GET("/api/job-categories").then(c=>setCats(c||[])).catch(()=>{});
+  };
+  useEffect(()=>{if(activeOrgId)load();},[activeOrgId]);
+
+  const save=async()=>{
+    if(!form.name){notify("Category name required","error");return;}
+    try{
+      if(editing) await PATCH(`/api/job-categories/${editing}`,form);
+      else await POST("/api/job-categories",{...form,org_id:activeOrgId});
+      notify("Category saved ✓"); setShow(false); setEditing(null);
+      setForm({name:"",working_days_type:26,sunday_off:true,cl_per_month:2,sl_per_month:1,paid_off_days:0,description:""});
+      load();
+    }catch(e){notify(e.message,"error");}
+  };
+
+  const del=async(id)=>{
+    if(!window.confirm("Delete this category?")) return;
+    try{await DEL(`/api/job-categories/${id}`);notify("Deleted");load();}
+    catch(e){notify(e.message,"error");}
+  };
+
+  const startEdit=(cat)=>{
+    setEditing(cat.id);
+    setForm({name:cat.name,working_days_type:cat.working_days_type,sunday_off:cat.sunday_off,cl_per_month:cat.cl_per_month,sl_per_month:cat.sl_per_month,paid_off_days:cat.paid_off_days,description:cat.description||""});
+    setShow(true);
+  };
+
+  return(
+    <div style={{background:C.white,borderRadius:20,padding:20,marginTop:16,boxShadow:`0 2px 10px ${C.g300}33`}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+        <p style={{color:C.g800,fontWeight:800,fontSize:15}}>👔 Job Categories</p>
+        <button onClick={()=>{setShow(!show);setEditing(null);setForm({name:"",working_days_type:26,sunday_off:true,cl_per_month:2,sl_per_month:1,paid_off_days:0,description:""}); }}
+          style={{background:C.g100,border:"none",borderRadius:8,padding:"6px 12px",cursor:"pointer",color:C.g700,fontWeight:700,fontSize:12}}>
+          {show&&!editing?"Cancel":"+ Add Category"}
+        </button>
+      </div>
+      <p style={{color:C.gr500,fontSize:12,marginBottom:12}}>Define working schedules and leave entitlements per staff type</p>
+
+      {/* Existing categories */}
+      {cats.map(cat=>(
+        <div key={cat.id} style={{background:C.g50,borderRadius:14,padding:12,marginBottom:8,border:`1px solid ${C.g200}`}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+            <div>
+              <p style={{color:C.g800,fontWeight:800,fontSize:14}}>{cat.name}</p>
+              <p style={{color:C.gr500,fontSize:12}}>
+                {cat.sunday_off?"Sunday off":"7-day working"} · {cat.working_days_type} days
+              </p>
+              <div style={{display:"flex",gap:6,marginTop:4,flexWrap:"wrap"}}>
+                <span style={{background:"#dcfce7",color:"#15803d",fontSize:11,padding:"2px 8px",borderRadius:20,fontWeight:700}}>CL: {cat.cl_per_month}/mo</span>
+                <span style={{background:"#eff6ff",color:"#3b82f6",fontSize:11,padding:"2px 8px",borderRadius:20,fontWeight:700}}>SL: {cat.sl_per_month}/mo</span>
+                {cat.paid_off_days>0&&<span style={{background:"#fef3c7",color:"#d97706",fontSize:11,padding:"2px 8px",borderRadius:20,fontWeight:700}}>Paid off: {cat.paid_off_days}/mo</span>}
+              </div>
+            </div>
+            <div style={{display:"flex",gap:6}}>
+              <button onClick={()=>startEdit(cat)} style={{background:"#fff",border:`1px solid ${C.g300}`,borderRadius:8,padding:"4px 10px",cursor:"pointer",color:C.g700,fontSize:12}}>✏️</button>
+              <button onClick={()=>del(cat.id)} style={{background:"#fff",border:"1px solid #fca5a5",borderRadius:8,padding:"4px 10px",cursor:"pointer",color:C.red,fontSize:12}}>🗑</button>
+            </div>
+          </div>
+        </div>
+      ))}
+
+      {/* Add/Edit form */}
+      {show&&(
+        <div style={{background:"#f0faf4",borderRadius:14,padding:16,marginTop:8,border:`1px solid ${C.g300}`}}>
+          <p style={{color:C.g800,fontWeight:800,marginBottom:12}}>{editing?"Edit Category":"New Category"}</p>
+          <label style={S.label}>Category name</label>
+          <input style={S.input} placeholder="e.g. Admin Staff, Kitchen Staff" value={form.name} onChange={e=>f("name",e.target.value)}/>
+          <label style={S.label}>Working schedule</label>
+          <select style={S.select} value={form.working_days_type} onChange={e=>f("working_days_type",Number(e.target.value))}>
+            <option value={26}>26 days — Sunday off</option>
+            <option value={30}>30 days — 7-day working</option>
+          </select>
+          <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginBottom:10}}>
+            <input type="checkbox" checked={form.sunday_off} onChange={e=>f("sunday_off",e.target.checked)} style={{accentColor:C.g600,width:16,height:16}}/>
+            <span style={{color:C.gr700,fontSize:14}}>Sunday is a rest day (not counted as absent)</span>
+          </label>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+            <div>
+              <label style={S.label}>CL/month</label>
+              <input style={S.input} type="number" min="0" max="30" value={form.cl_per_month} onChange={e=>f("cl_per_month",Number(e.target.value))}/>
+            </div>
+            <div>
+              <label style={S.label}>SL/month</label>
+              <input style={S.input} type="number" min="0" max="30" value={form.sl_per_month} onChange={e=>f("sl_per_month",Number(e.target.value))}/>
+            </div>
+            <div>
+              <label style={S.label}>Paid off/mo</label>
+              <input style={S.input} type="number" min="0" max="10" value={form.paid_off_days} onChange={e=>f("paid_off_days",Number(e.target.value))}/>
+            </div>
+          </div>
+          <label style={S.label}>Description (optional)</label>
+          <input style={S.input} placeholder="e.g. Full-time kitchen staff" value={form.description} onChange={e=>f("description",e.target.value)}/>
+          <button style={S.btn} onClick={save}>Save category</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── LIVE WORKING CLOCK ────────────────────────────────────────
+function WorkingClock({cinTime}) {
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(()=>{
+    if(!cinTime) return;
+    const cinStr = String(cinTime).slice(0,5);
+    const [ch,cm] = cinStr.split(':').map(Number);
+    const cinDate = new Date();
+    cinDate.setHours(ch,cm,0,0);
+
+    const tick=()=>{
+      const now = new Date();
+      const diff = Math.floor((now - cinDate)/1000);
+      setElapsed(Math.max(0,diff));
+    };
+    tick();
+    const interval = setInterval(tick, 30000); // update every 30s
+    return ()=>clearInterval(interval);
+  },[cinTime]);
+
+  const h = Math.floor(elapsed/3600);
+  const m = Math.floor((elapsed%3600)/60);
+
+  return(
+    <div style={{background:`linear-gradient(135deg,${C.g700},${C.g500})`,borderRadius:16,padding:"12px 16px",marginBottom:12,display:"flex",alignItems:"center",gap:12}}>
+      <span style={{fontSize:24}}>⏱</span>
+      <div>
+        <p style={{color:"rgba(255,255,255,0.7)",fontSize:11}}>Working time</p>
+        <p style={{color:"#fff",fontWeight:900,fontSize:20}}>{h}h {pad(m)}m</p>
+      </div>
     </div>
   );
 }
