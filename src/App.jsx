@@ -1512,12 +1512,12 @@ function AdminSettings({user, notify, activeOrgId}) {
 
   useEffect(()=>{
     if(!activeOrgId)return;
-    Promise.all([GET(`/api/orgs/${activeOrgId}/settings`),GET("/api/branches",{org_id:activeOrgId})])
+    Promise.all([GET("/api/orgs/"+activeOrgId+"/settings"),GET("/api/branches",{org_id:activeOrgId})])
       .then(([s,b])=>{setSettings(s);setBranches(b||[]);}).catch(e=>notify(e.message,"error")).finally(()=>setLoading(false));
   },[activeOrgId]);
 
   const saveSettings=async()=>{
-    try{await PATCH(`/api/orgs/${activeOrgId}/settings`,settings);notify("Settings saved ✓");}
+    try{await PATCH("/api/orgs/"+activeOrgId+"/settings",settings);notify("Settings saved ✓");}
     catch(e){notify(e.message,"error");}
   };
 
@@ -1958,7 +1958,7 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
             </div>
             {editRec?.is_early_checkout&&!editRec?.early_penalty_waived&&(
               <button style={{...S.btn,background:"#d97706",marginTop:8}}
-                onClick={async()=>{try{await PATCH(`/api/attendance/${editRec.id}/waive-early`,{});notify("Early checkout penalty waived ✓");setEditRec(null);await loadRecords();}catch(e){notify(e.message,"error");}}}>
+                onClick={async()=>{try{await PATCH("/api/attendance/"+editRec.id+"/waive-early",{});notify("Early checkout penalty waived ✓");setEditRec(null);await loadRecords();}catch(e){notify(e.message,"error");}}}>
                 ✅ Waive early checkout penalty
               </button>
             )}
@@ -2314,7 +2314,7 @@ function EmpAdvances({ user, notify }) {
     try {
       const [adv, sett] = await Promise.all([
         GET("/api/advances"),
-        GET(`/api/orgs/${user.org_id}/settings`),
+        GET("/api/orgs/"+user.org_id+"/settings"),
       ]);
       setAdvances(adv || []);
       setSettings(sett || {});
@@ -2990,7 +2990,7 @@ function ResetPasswordBox({empId, empName, notify}) {
     if(!newPw||newPw.length<4){notify("Minimum 4 characters","error");return;}
     setLoading(true);
     try{
-      await POST(`/api/employees/${empId}/reset-password`,{password:newPw});
+      await POST("/api/employees/"+empId+"/reset-password",{password:newPw});
       notify(`✅ Password reset for ${empName}`);
       setShow(false);setNewPw("");
     }catch(e){notify(e.message,"error");}
@@ -3331,7 +3331,7 @@ function DeviceResetBox({empId, empName, notify}) {
     if(!window.confirm(`Reset registered device for ${empName}? They can register a new device on their next check-in.`)) return;
     setLoading(true);
     try {
-      await PATCH(`/api/devices/${empId}/reset`, {});
+      await PATCH("/api/devices/"+empId+"/reset", {});
       notify(`✅ Device reset for ${empName} — they can register a new device`);
       setShow(false); setHasDevice(false);
     } catch(e) { notify(e.message,"error"); }
@@ -3501,6 +3501,7 @@ function WorkingClock({cinTime}) {
     </div>
   );
 }
+
 
 function WorkedTime({cin, cout}) {
   const mins = toM(cout) - toM(cin);
