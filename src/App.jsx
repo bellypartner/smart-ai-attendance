@@ -1942,11 +1942,7 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
                   type="time" value={editForm.cout} onChange={e => setEditForm(f => ({ ...f, cout: e.target.value }))} />
               </div>
             </div>
-            {editForm.cin && editForm.cout && toM(editForm.cout) > toM(editForm.cin) && (
-              <p style={{ color: "#16a34a", fontSize: 13, margin: "8px 0" }}>
-                {(()=>{const w=toM(editForm.cout)-toM(editForm.cin);return `⏱ Worked: ${Math.floor(w/60)}h ${w%60}m`;})()}{(()=>{const w=toM(editForm.cout)-toM(editForm.cin);const h=Math.floor(w/60);return "⏱ Worked: "+h+"h "+(w%60)+"m";})()}
-              </p>
-            )}
+            {editForm.cin&&editForm.cout&&toM(editForm.cout)>toM(editForm.cin)&&<WorkedTime cin={editForm.cin} cout={editForm.cout}/>}
             <label style={{ color: "#166534", fontSize: 13, fontWeight: 600, marginBottom: 6, display: "block", marginTop: 10 }}>Reason for edit</label>
             <input style={{ background: "#f0faf4", border: "1.5px solid #86efac", borderRadius: 12, color: "#111827", padding: "12px 14px", fontSize: 14, outline: "none", width: "100%", marginBottom: 12 }}
               placeholder="e.g. Employee forgot to scan" value={editForm.notes} onChange={e => setEditForm(f => ({ ...f, notes: e.target.value }))} />
@@ -3504,6 +3500,13 @@ function WorkingClock({cinTime}) {
       </div>
     </div>
   );
+}
+
+function WorkedTime({cin, cout}) {
+  const mins = toM(cout) - toM(cin);
+  const h = Math.floor(mins / 60);
+  const m = mins - (h * 60);
+  return <p style={{color:"#16a34a",fontSize:13,margin:"8px 0"}}>{"⏱ Worked: "+h+"h "+m+"m"}</p>;
 }
 
 // ── STYLES ─────────────────────────────────────────────────────────────────
