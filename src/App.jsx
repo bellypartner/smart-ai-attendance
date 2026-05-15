@@ -1944,7 +1944,7 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
             </div>
             {editForm.cin && editForm.cout && toM(editForm.cout) > toM(editForm.cin) && (
               <p style={{ color: "#16a34a", fontSize: 13, margin: "8px 0" }}>
-                {(()=>{const w=toM(editForm.cout)-toM(editForm.cin);return `⏱ Worked: ${Math.floor(w/60)}h ${w%60}m`;})()}
+                {(()=>{const w=toM(editForm.cout)-toM(editForm.cin);return `⏱ Worked: ${Math.floor(w/60)}h ${w%60}m`;})()}{(()=>{const w=toM(editForm.cout)-toM(editForm.cin);const h=Math.floor(w/60);return "⏱ Worked: "+h+"h "+(w%60)+"m";})()}
               </p>
             )}
             <label style={{ color: "#166534", fontSize: 13, fontWeight: 600, marginBottom: 6, display: "block", marginTop: 10 }}>Reason for edit</label>
