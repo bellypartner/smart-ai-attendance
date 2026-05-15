@@ -1376,21 +1376,19 @@ function AdminQR({notify, activeOrgId}) {
     const canvas=qrRef.current?.querySelector("canvas");
     if(!canvas){notify("QR not ready","error");return;}
     const imgData=canvas.toDataURL("image/png");
-    const html=[
-      "<html><head><title>",br?.name," QR</title>",
-      "<style>body{display:flex;flex-direction:column;align-items:center;",
-      "justify-content:center;min-height:100vh;font-family:sans-serif;margin:0;padding:20px}",
-      "img{width:250px;height:250px}</style></head><body>",
-      "<h2 style='color:#166534'>",br?.name,"</h2>",
-      "<p>SmartAi Attendance — Scan to mark attendance</p>",
-      "<img src='",imgData,"'/>",
-      "<p style='color:#9ca3af;font-size:12px'>by 3SL Media Labs</p>",
-      "</body></html>"
-    ].join("");
+    const brName=br?.name||"Branch";
+    const html="<html><head><title>"+brName+" QR</title>"
+      +"<style>body{display:flex;flex-direction:column;align-items:center;"
+      +"justify-content:center;min-height:100vh;font-family:sans-serif;margin:0;padding:20px}"
+      +"h2{color:#166534}img{width:250px;height:250px}"
+      +"p{color:#6b7280;font-size:13px}</style></head><body>"
+      +"<h2>"+brName+"</h2>"
+      +"<p>SmartAi Attendance — Scan to mark attendance</p>"
+      +"<img src='"+imgData+"'/>"
+      +"<p style='color:#9ca3af;font-size:11px'>by 3SL Media Labs</p>"
+      +"</body></html>";
     const w=window.open("","_blank");
-    w.document.write(html);
-    w.document.close();
-    setTimeout(()=>{w.print();},500);
+    if(w){w.document.write(html);w.document.close();setTimeout(()=>{w.print();},500);}
   };
 
   return(
@@ -1944,10 +1942,10 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
                   type="time" value={editForm.cout} onChange={e => setEditForm(f => ({ ...f, cout: e.target.value }))} />
               </div>
             </div>
-            {editForm.cin && editForm.cout && toM(editForm.cout) > toM(editForm.cin) && (()=>{
-  const mins = toM(editForm.cout) - toM(editForm.cin);
-  return <p style={{ color: "#16a34a", fontSize: 13, margin: "8px 0" }}>⏱ Worked: {Math.floor(mins/60)}h {mins%60}m</p>;
-})()}
+            {editForm.cin && editForm.cout && toM(editForm.cout) > toM(editForm.cin) && (
+              <p style={{ color: "#16a34a", fontSize: 13, margin: "8px 0" }}>
+                {(()=>{const w=toM(editForm.cout)-toM(editForm.cin);return `⏱ Worked: ${Math.floor(w/60)}h ${w%60}m`;})()}
+              </p>
             )}
             <label style={{ color: "#166534", fontSize: 13, fontWeight: 600, marginBottom: 6, display: "block", marginTop: 10 }}>Reason for edit</label>
             <input style={{ background: "#f0faf4", border: "1.5px solid #86efac", borderRadius: 12, color: "#111827", padding: "12px 14px", fontSize: 14, outline: "none", width: "100%", marginBottom: 12 }}
