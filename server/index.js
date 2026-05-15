@@ -831,7 +831,16 @@ app.post('/api/attendance/checkout', auth(['employee']), async (req, res) => {
 app.post('/api/attendance/admin-mark', auth(['super_admin', 'org_admin', 'branch_admin']), async (req, res) => {
   try {
     const oid = orgId(req);
-    const { employee_id, date, check_in_time, check_out_time, notes } = req.body;
+    const { employee_id, date, check_in_time, check_out_time, notes, clear } = req.body;
+
+    // Clear attendance
+    if (clear === true) {
+      await db('DELETE FROM attendance_records WHERE employee_id=$1 AND date::text=$2', [employee_id, date]);
+      return res.json({ ok: true, cleared: true });
+    }
+
+    if (!check_in_time) return res.status(400).json({ error: 'Check-in time required' });
+    if (!notes || !notes.trim()) return res.status(400).json({ error: 'Reason for edit is required' });
 
     const { rows: sch } = await db(`
       SELECT ss.shift_id, st.start_time
@@ -839,24 +848,29 @@ app.post('/api/attendance/admin-mark', auth(['super_admin', 'org_admin', 'branch
       WHERE ss.employee_id=$1 AND ss.date=$2 ORDER BY ss.is_override DESC LIMIT 1
     `, [employee_id, date]);
 
-    const { rows: sett } = await db('SELECT grace_period_mins FROM org_settings WHERE org_id=$1', [oid]);
-    const grace = sett[0]?.grace_period_mins || 15;
-    const shiftMins = sch[0] ? toMins(sch[0].start_time) : 540;
     const cinMins = toMins(check_in_time);
-    const lateMins = Math.max(0, cinMins - shiftMins);
     const workedMins = check_out_time ? Math.max(0, toMins(check_out_time) - cinMins) : null;
+
+    // Admin edit does NOT recalculate late — preserve existing or set false
+    // Admin is correcting records, not penalising
+    const { rows: existing } = await db(
+      'SELECT is_late, late_mins FROM attendance_records WHERE employee_id=$1 AND date::text=$2 LIMIT 1',
+      [employee_id, date]
+    );
+    const keepIsLate = existing[0]?.is_late || false;
+    const keepLateMins = existing[0]?.late_mins || 0;
 
     await db(`
       INSERT INTO attendance_records
         (org_id,employee_id,shift_id,date,check_in_time,check_out_time,worked_mins,
-         is_late,late_mins,approval_status,admin_edited,edited_by,edited_at,geo_verified,notes)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'approved',true,$10,now(),false,$11)
+         is_late,late_mins,approval_status,admin_edited,edited_by,edited_at,geo_verified,notes,checkout_type)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'approved',true,$10,now(),false,$11,'manual')
       ON CONFLICT (employee_id,date)
-      DO UPDATE SET check_in_time=$5,check_out_time=$6,worked_mins=$7,is_late=$8,late_mins=$9,
+      DO UPDATE SET check_in_time=$5,check_out_time=$6,worked_mins=$7,
                     approval_status='approved',admin_edited=true,edited_by=$10,edited_at=now(),
-                    notes=$11,updated_at=now()
-    `, [oid, employee_id, sch[0]?.shift_id || null, date, check_in_time, check_out_time,
-      workedMins, lateMins > grace, lateMins, req.user.id, notes || null]);
+                    notes=$11,checkout_type='manual',updated_at=now()
+    `, [oid, employee_id, sch[0]?.shift_id || null, date, check_in_time, check_out_time || null,
+      workedMins, keepIsLate, keepLateMins, req.user.id, notes]);
 
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -1422,11 +1436,14 @@ app.get('/api/job-categories', auth(), async (req, res) => {
 app.post('/api/job-categories', auth(['super_admin','org_admin']), async (req, res) => {
   try {
     const oid = orgId(req);
-    const { name, working_days_type, sunday_off, cl_per_month, sl_per_month, paid_off_days, description } = req.body;
+    const { name, working_days_type, sunday_off, weekly_off, cl_per_month, sl_per_month, paid_off_days, description } = req.body;
+    // Derive sunday_off from weekly_off
+    const hasSundayOff = weekly_off === 'sunday' || weekly_off === 'saturday_sunday' || sunday_off !== false;
+    const hasSaturdayOff = weekly_off === 'saturday_sunday';
     const { rows } = await db(
       `INSERT INTO job_categories (org_id,name,working_days_type,sunday_off,cl_per_month,sl_per_month,paid_off_days,description)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-      [oid, name, working_days_type||26, sunday_off!==false, cl_per_month||0, sl_per_month||0, paid_off_days||0, description||null]);
+      [oid, name, working_days_type||26, hasSundayOff, cl_per_month||0, sl_per_month||0, paid_off_days||0, description||null]);
     res.json(rows[0]);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });

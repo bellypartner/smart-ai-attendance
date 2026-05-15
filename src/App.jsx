@@ -209,7 +209,12 @@ function QRScanner({onScan, onClose, branches}) {
           <div style={{position:"absolute",inset:14,border:`2px solid ${C.g500}`,borderRadius:10}}/>
           {streaming&&<div style={{position:"absolute",left:14,right:14,height:2,background:`linear-gradient(90deg,transparent,${C.g500},transparent)`,top:"40%",animation:"scanline 2s ease-in-out infinite"}}/>}
         </div>
-        {err&&<p style={{color:C.amber,fontSize:13,textAlign:"center",marginBottom:8}}>⚠ {err}</p>}
+        {err&&(
+          <div style={{background:"#fffbeb",border:"1px solid #fcd34d",borderRadius:12,padding:12,marginBottom:8}}>
+            <p style={{color:"#92400e",fontWeight:700,fontSize:13}}>⚠ {err}</p>
+            <p style={{color:"#78350f",fontSize:12,marginTop:4}}>Camera not available — select your branch below and tap Mark Attendance directly. Your location will still be verified.</p>
+          </div>
+        )}
         <p style={{color:C.g700,fontSize:13,fontWeight:700,marginBottom:8}}>Select your branch:</p>
         <select style={{...S.select,marginBottom:10}} value={selBranch} onChange={e=>setSelBranch(e.target.value)}>
           <option value="">— Select branch —</option>
@@ -702,7 +707,6 @@ function AdminApp({user, notify, page, setPage, activeOrgId, setActiveOrgId, onL
     {k:"adm_approvals",i:"✅",l:"Approvals"},
     {k:"adm_qr",i:"📷",l:"QR"},
     ...(isSA||isOA?[{k:"adm_reports",i:"📊",l:"Reports"}]:[]),
-    ...(isSA||isOA?[{k:"adm_edit",i:"✏️",l:"Edit Att"}]:[]),
     {k:"adm_settings",i:"⚙️",l:"Settings"},
     {k:"adm_att_table",i:"📊",l:"Att."},
     {k:"adm_leave_hist",i:"📝",l:"Leaves"},
@@ -729,6 +733,62 @@ function AdminApp({user, notify, page, setPage, activeOrgId, setActiveOrgId, onL
     adm_calendar: <AttendanceCalendar user={user} notify={notify} isAdmin={true} activeOrgId={activeOrgId}/>,
     adm_hierarchy: <HierarchyTable user={user} notify={notify} activeOrgId={activeOrgId}/>,
   };
+  const isDesktop = (isSA||isOA||isBA) && window.innerWidth >= 1024;
+
+  if(isDesktop) {
+    return(
+      <div style={{display:"flex",height:"100vh",background:C.g50,overflow:"hidden"}}>
+        {/* Sidebar */}
+        <div style={{width:window.innerWidth>=1280?220:64,minWidth:window.innerWidth>=1280?220:64,background:"#fff",borderRight:`1px solid ${C.g100}`,display:"flex",flexDirection:"column",height:"100vh",position:"fixed",left:0,top:0,zIndex:20,transition:"width .2s"}}>
+          {/* Logo */}
+          <div style={{padding:"18px 16px 12px",borderBottom:`1px solid ${C.g100}`}}>
+            {window.innerWidth>=1280
+              ? <><p style={{color:C.g800,fontWeight:900,fontSize:15,lineHeight:1.2}}>SmartAi Attendance</p><p style={{color:C.gr500,fontSize:11}}>by 3SL Media Labs</p></>
+              : <span style={{fontSize:22}}>📍</span>}
+          </div>
+          {/* BA toggle */}
+          {isBA&&(
+            <div style={{padding:"10px 10px 0"}}>
+              <button onClick={()=>setPersonalMode(!personalMode)}
+                style={{width:"100%",background:personalMode?C.g600:C.g100,border:"none",borderRadius:10,padding:"8px 6px",cursor:"pointer",color:personalMode?C.white:C.gr500,fontWeight:700,fontSize:12,display:"flex",alignItems:"center",gap:6,justifyContent:window.innerWidth>=1280?"flex-start":"center"}}>
+                <span>{personalMode?"👤":"🏢"}</span>
+                {window.innerWidth>=1280&&<span>{personalMode?"My Attendance":"Admin Panel"}</span>}
+              </button>
+            </div>
+          )}
+          {/* Nav items */}
+          <div style={{flex:1,overflowY:"auto",padding:"8px 0"}}>
+            {nav.map(item=>(
+              <button key={item.k} onClick={()=>setPage(item.k)}
+                style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:window.innerWidth>=1280?"10px 16px":"10px 0",justifyContent:window.innerWidth>=1280?"flex-start":"center",background:page===item.k?C.g50:"transparent",border:"none",borderLeft:page===item.k?`3px solid ${C.g600}`:"3px solid transparent",cursor:"pointer",color:page===item.k?C.g700:C.gr500,fontWeight:page===item.k?700:400,fontSize:13}}>
+                <span style={{fontSize:18,minWidth:24,textAlign:"center"}}>{item.i}</span>
+                {window.innerWidth>=1280&&<span>{item.l}</span>}
+              </button>
+            ))}
+          </div>
+          {/* User + logout */}
+          <div style={{padding:"12px 16px",borderTop:`1px solid ${C.g100}`,display:"flex",alignItems:"center",gap:8}}>
+            {window.innerWidth>=1280&&(
+              <div style={{flex:1,minWidth:0}}>
+                <p style={{color:C.g800,fontWeight:700,fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{user.name}</p>
+                <p style={{color:C.gr500,fontSize:11}}>{ROLE_CFG[user.role]?.label}</p>
+              </div>
+            )}
+            <NotificationBell user={user}/>
+            <button onClick={onLogout} style={{background:C.g100,border:"none",borderRadius:8,width:32,height:32,cursor:"pointer",color:C.g700,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center"}}>↩</button>
+          </div>
+        </div>
+        {/* Main content */}
+        <div style={{marginLeft:window.innerWidth>=1280?220:64,flex:1,overflowY:"auto",height:"100vh"}}>
+          {personalMode&&isBA
+            ? <BranchAdminPersonalView user={user} notify={notify} page={page} setPage={setPage}/>
+            : pages[page]||pages.adm_home
+          }
+        </div>
+      </div>
+    );
+  }
+
   return(
     <div style={{display:"flex",flexDirection:"column",height:"100vh",maxWidth:480,margin:"0 auto",background:C.g50}}>
       <TopBar user={user} onLogout={onLogout} orgId={activeOrgId}/>
@@ -905,7 +965,7 @@ function AdminStaff({user, notify, activeOrgId}) {
 
   const load = async () => {
     try {
-      const [e,b,s,cat] = await Promise.all([GET("/api/employees",{org_id:activeOrgId}),GET("/api/branches",{org_id:activeOrgId}),GET("/api/shifts",{org_id:activeOrgId}),GET("/api/job-categories")]);
+      const [e,b,s,cat] = await Promise.all([GET("/api/employees",{org_id:activeOrgId}),GET("/api/branches",{org_id:activeOrgId}),GET("/api/shifts",{org_id:activeOrgId}),GET("/api/job-categories",{org_id:activeOrgId})]);
       setEmployees(e||[]); setBranches(b||[]); setShifts(s||[]); setCategories(cat||[]);
     } catch(e){notify(e.message,"error");}
     finally{setLoading(false);}
@@ -1295,25 +1355,62 @@ function AdminApprovals({user, notify, activeOrgId}) {
 
 function AdminQR({notify, activeOrgId}) {
   const [branches,setBranches]=useState([]), [sel,setSel]=useState("");
+  const qrRef=useRef(null);
   useEffect(()=>{
     if(!activeOrgId)return;
     GET("/api/branches",{org_id:activeOrgId}).then(b=>{setBranches(b||[]);if(b?.length)setSel(b[0].id);}).catch(e=>notify(e.message,"error"));
   },[activeOrgId]);
   const br=branches.find(b=>b.id===sel);
+
+  const downloadPNG=()=>{
+    const canvas=qrRef.current?.querySelector("canvas");
+    if(!canvas){notify("QR not ready","error");return;}
+    const a=document.createElement("a");
+    a.href=canvas.toDataURL("image/png");
+    a.download=`${br?.name||"branch"}-qr.png`;
+    a.click();
+    notify("QR downloaded as PNG ✓");
+  };
+
+  const downloadPDF=()=>{
+    const canvas=qrRef.current?.querySelector("canvas");
+    if(!canvas){notify("QR not ready","error");return;}
+    const imgData=canvas.toDataURL("image/png");
+    const html=[
+      "<html><head><title>",br?.name," QR</title>",
+      "<style>body{display:flex;flex-direction:column;align-items:center;",
+      "justify-content:center;min-height:100vh;font-family:sans-serif;margin:0;padding:20px}",
+      "img{width:250px;height:250px}</style></head><body>",
+      "<h2 style='color:#166534'>",br?.name,"</h2>",
+      "<p>SmartAi Attendance — Scan to mark attendance</p>",
+      "<img src='",imgData,"'/>",
+      "<p style='color:#9ca3af;font-size:12px'>by 3SL Media Labs</p>",
+      "</body></html>"
+    ].join("");
+    const w=window.open("","_blank");
+    w.document.write(html);
+    w.document.close();
+    setTimeout(()=>{w.print();},500);
+  };
+
   return(
     <div style={{padding:20}}>
       <h2 style={{color:C.g800,fontSize:22,fontWeight:800,marginBottom:16}}>Branch QR Codes</h2>
-      <select style={S.select} value={sel} onChange={e=>setSel(e.target.value)}>
+      <select style={{...S.select,marginBottom:16}} value={sel} onChange={e=>setSel(e.target.value)}>
         {branches.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}
       </select>
       {br&&(
         <div style={{background:C.white,borderRadius:24,padding:32,textAlign:"center",boxShadow:`0 4px 24px ${C.g300}66`}}>
           <p style={{color:C.gr500,fontSize:13,marginBottom:20}}>📍 {br.address}</p>
-          <div style={{display:"flex",justifyContent:"center",marginBottom:20}}>
-            <QRCanvas data={JSON.stringify({branchId:br.id,token:"SMARTAI_V4",app:"3SL"})} size={200}/>
+          <div ref={qrRef} style={{display:"flex",justifyContent:"center",marginBottom:20}}>
+            <QRCanvas data={JSON.stringify({branchId:br.id,token:"SMARTAI_V4",app:"3SL"})} size={220}/>
           </div>
           <h3 style={{color:C.g800,fontSize:20,fontWeight:800}}>{br.name}</h3>
           <p style={{color:C.g700,fontSize:13,marginTop:10}}>📍 {br.lat}, {br.lng} · ⭕ {br.radius}m geo-fence</p>
+          <div style={{display:"flex",gap:10,marginTop:20,justifyContent:"center"}}>
+            <button style={{...S.btn,width:"auto",padding:"10px 20px",background:C.g700}} onClick={downloadPNG}>⬇ Download PNG</button>
+            <button style={{...S.btn,width:"auto",padding:"10px 20px",background:"#7c3aed"}} onClick={downloadPDF}>🖨 Print / PDF</button>
+          </div>
         </div>
       )}
     </div>
@@ -1621,6 +1718,7 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
 
   const saveEdit = async () => {
     if (!editRec || !editForm.cin) { notify("Check-in time is required", "error"); return; }
+    if (!editForm.notes || !editForm.notes.trim()) { notify("Reason for edit is required", "error"); return; }
     setSaving(true);
     try {
       await POST("/api/attendance/admin-mark", {
@@ -1870,12 +1968,11 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
                 ✅ Waive early checkout penalty
               </button>
             )}
+            </div>
           </div>
         </div>
-      
       )}
-      </div>
-      
+    </div>
   );
 }
 
@@ -3283,10 +3380,11 @@ function JobCategoriesManager({notify, activeOrgId}) {
   const save=async()=>{
     if(!form.name){notify("Category name required","error");return;}
     try{
-      if(editing) await PATCH(`/api/job-categories/${editing}`,form);
-      else await POST("/api/job-categories",{...form,org_id:activeOrgId});
+      const catData={...form,sunday_off:form.weekly_off!=="none",org_id:activeOrgId};
+      if(editing) await PATCH(`/api/job-categories/${editing}`,catData);
+      else await POST("/api/job-categories",catData);
       notify("Category saved ✓"); setShow(false); setEditing(null);
-      setForm({name:"",working_days_type:26,sunday_off:true,cl_per_month:2,sl_per_month:1,paid_off_days:0,description:""});
+      setForm({name:"",working_days_type:26,weekly_off:"sunday",sunday_off:true,cl_per_month:2,sl_per_month:1,paid_off_days:0,description:""});
       load();
     }catch(e){notify(e.message,"error");}
   };
@@ -3299,7 +3397,7 @@ function JobCategoriesManager({notify, activeOrgId}) {
 
   const startEdit=(cat)=>{
     setEditing(cat.id);
-    setForm({name:cat.name,working_days_type:cat.working_days_type,sunday_off:cat.sunday_off,cl_per_month:cat.cl_per_month,sl_per_month:cat.sl_per_month,paid_off_days:cat.paid_off_days,description:cat.description||""});
+    setForm({name:cat.name,working_days_type:cat.working_days_type,weekly_off:cat.weekly_off||"sunday",sunday_off:cat.sunday_off,cl_per_month:cat.cl_per_month,sl_per_month:cat.sl_per_month,paid_off_days:cat.paid_off_days,description:cat.description||""});
     setShow(true);
   };
 
@@ -3307,7 +3405,7 @@ function JobCategoriesManager({notify, activeOrgId}) {
     <div style={{background:C.white,borderRadius:20,padding:20,marginTop:16,boxShadow:`0 2px 10px ${C.g300}33`}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
         <p style={{color:C.g800,fontWeight:800,fontSize:15}}>👔 Job Categories</p>
-        <button onClick={()=>{setShow(!show);setEditing(null);setForm({name:"",working_days_type:26,sunday_off:true,cl_per_month:2,sl_per_month:1,paid_off_days:0,description:""}); }}
+        <button onClick={()=>{setShow(!show);setEditing(null);setForm({name:"",working_days_type:26,weekly_off:"sunday",sunday_off:true,cl_per_month:2,sl_per_month:1,paid_off_days:0,description:""}); }}
           style={{background:C.g100,border:"none",borderRadius:8,padding:"6px 12px",cursor:"pointer",color:C.g700,fontWeight:700,fontSize:12}}>
           {show&&!editing?"Cancel":"+ Add Category"}
         </button>
@@ -3343,15 +3441,15 @@ function JobCategoriesManager({notify, activeOrgId}) {
           <p style={{color:C.g800,fontWeight:800,marginBottom:12}}>{editing?"Edit Category":"New Category"}</p>
           <label style={S.label}>Category name</label>
           <input style={S.input} placeholder="e.g. Admin Staff, Kitchen Staff" value={form.name} onChange={e=>f("name",e.target.value)}/>
-          <label style={S.label}>Working schedule</label>
-          <select style={S.select} value={form.working_days_type} onChange={e=>f("working_days_type",Number(e.target.value))}>
-            <option value={26}>26 days — Sunday off</option>
-            <option value={30}>30 days — 7-day working</option>
+          <label style={S.label}>Working days per month</label>
+          <input style={S.input} type="number" min="1" max="31" placeholder="e.g. 26, 28, 30" value={form.working_days_type} onChange={e=>f("working_days_type",Number(e.target.value))}/>
+          <label style={S.label}>Weekly holiday</label>
+          <select style={S.select} value={form.weekly_off} onChange={e=>f("weekly_off",e.target.value)}>
+            <option value="none">No weekly off — work all days</option>
+            <option value="sunday">Sunday off only</option>
+            <option value="saturday_sunday">Saturday + Sunday off</option>
           </select>
-          <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginBottom:10}}>
-            <input type="checkbox" checked={form.sunday_off} onChange={e=>f("sunday_off",e.target.checked)} style={{accentColor:C.g600,width:16,height:16}}/>
-            <span style={{color:C.gr700,fontSize:14}}>Sunday is a rest day (not counted as absent)</span>
-          </label>
+
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
             <div>
               <label style={S.label}>CL/month</label>
