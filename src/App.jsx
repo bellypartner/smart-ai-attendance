@@ -1958,14 +1958,13 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
             </div>
             {editRec?.is_early_checkout&&!editRec?.early_penalty_waived&&(
               <button style={{...S.btn,background:"#d97706",marginTop:8}}
-                onClick={async()=>{try{await PATCH("/api/attendance/"+editRec.id+"/waive-early",{});notify("Early checkout penalty waived ✓");setEditRec(null);await loadRecords();}catch(e){notify(e.message,"error");}}}>
-                ✅ Waive early checkout penalty
+                onClick={async()=>{try{const url="/api/attendance/"+editRec.id+"/waive-early";await PATCH(url,{});notify("Early checkout penalty waived ✓");setEditRec(null);await loadRecords();}catch(e){notify(e.message,"error");}}}>                ✅ Waive early checkout penalty
               </button>
             )}
             </div>
           </div>
         </div>
-      )}
+      )
     </div>
   );
 }
