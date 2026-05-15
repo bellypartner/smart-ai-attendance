@@ -1944,10 +1944,10 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
                   type="time" value={editForm.cout} onChange={e => setEditForm(f => ({ ...f, cout: e.target.value }))} />
               </div>
             </div>
-            {editForm.cin && editForm.cout && toM(editForm.cout) > toM(editForm.cin) && (
-              <p style={{ color: "#16a34a", fontSize: 13, margin: "8px 0" }}>
-                ⏱ Worked: {Math.floor((toM(editForm.cout) - toM(editForm.cin)) / 60)}h {(toM(editForm.cout) - toM(editForm.cin)) % 60}m
-              </p>
+            {editForm.cin && editForm.cout && toM(editForm.cout) > toM(editForm.cin) && (()=>{
+  const mins = toM(editForm.cout) - toM(editForm.cin);
+  return <p style={{ color: "#16a34a", fontSize: 13, margin: "8px 0" }}>⏱ Worked: {Math.floor(mins/60)}h {mins%60}m</p>;
+})()}
             )}
             <label style={{ color: "#166534", fontSize: 13, fontWeight: 600, marginBottom: 6, display: "block", marginTop: 10 }}>Reason for edit</label>
             <input style={{ background: "#f0faf4", border: "1.5px solid #86efac", borderRadius: 12, color: "#111827", padding: "12px 14px", fontSize: 14, outline: "none", width: "100%", marginBottom: 12 }}
