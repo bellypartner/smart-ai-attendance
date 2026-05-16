@@ -635,8 +635,7 @@ app.get('/api/attendance', auth(), async (req, res) => {
 });
 
 // Check-in
-app.post('/api/attendance/checkin', auth(['employee']), async (req, res) => {
-  try {
+app.post('/api/attendance/checkin', auth(['employee','branch_admin']), async (req, res) => {  try {
     const { branch_id, geo_lat, geo_lng, geo_verified, device_fp } = req.body;
 
     // ── DEVICE BINDING CHECK ─────────────────────────────────
@@ -783,8 +782,7 @@ app.post('/api/attendance/checkin', auth(['employee']), async (req, res) => {
 });
 
 // Check-out
-app.post('/api/attendance/checkout', auth(['employee']), async (req, res) => {
-  try {
+app.post('/api/attendance/checkout', auth(['employee','branch_admin']), async (req, res) => {  try {
     const { date, time } = nowIST();
     const { rows } = await db(
       `SELECT ar.*, st.end_time AS shift_end
@@ -1360,7 +1358,7 @@ app.patch('/api/attendance/:id/waive-early', auth(['super_admin','org_admin','br
 // GET employees with registered devices (for admin)
 app.get('/api/devices', auth(['super_admin','org_admin']), async (req, res) => {
   try {
-    const oid = orgId(req);
+    const oid = req.query.org_id || orgId(req);
     const { rows } = await db(`
       SELECT u.id, u.name, u.phone, u.designation, b.name AS branch_name,
              u.registered_device_fp, u.registered_device_at

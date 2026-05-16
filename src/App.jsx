@@ -204,7 +204,7 @@ function QRScanner({onScan, onClose, branches}) {
           </div>
           <button onClick={onClose} style={S.iconBtn}>✕</button>
         </div>
-        <div style={{background:"#000",borderRadius:18,height:130,position:"relative",overflow:"hidden",marginBottom:14}}>
+        <div style={{background:"#000",borderRadius:18,height:280,width:"100%",position:"relative",overflow:"hidden",marginBottom:14}}>
           <video ref={vRef} autoPlay playsInline muted style={{width:"100%",height:"100%",objectFit:"cover"}}/>
           <div style={{position:"absolute",inset:14,border:`2px solid ${C.g500}`,borderRadius:10}}/>
           {streaming&&<div style={{position:"absolute",left:14,right:14,height:2,background:`linear-gradient(90deg,transparent,${C.g500},transparent)`,top:"40%",animation:"scanline 2s ease-in-out infinite"}}/>}
