@@ -204,7 +204,7 @@ function QRScanner({onScan, onClose, branches}) {
           </div>
           <button onClick={onClose} style={S.iconBtn}>✕</button>
         </div>
-        <div style={{background:"#000",borderRadius:18,height:280,width:"100%",position:"relative",overflow:"hidden",marginBottom:14}}>
+        <div style={{background:"#000",borderRadius:18,height:300,width:"100%",position:"relative",overflow:"hidden",marginBottom:14}}>
           <video ref={vRef} autoPlay playsInline muted style={{width:"100%",height:"100%",objectFit:"cover"}}/>
           <div style={{position:"absolute",inset:14,border:`2px solid ${C.g500}`,borderRadius:10}}/>
           {streaming&&<div style={{position:"absolute",left:14,right:14,height:2,background:`linear-gradient(90deg,transparent,${C.g500},transparent)`,top:"40%",animation:"scanline 2s ease-in-out infinite"}}/>}
@@ -1942,7 +1942,7 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
                   type="time" value={editForm.cout} onChange={e => setEditForm(f => ({ ...f, cout: e.target.value }))} />
               </div>
             </div>
-            {editForm.cin&&editForm.cout&&toM(editForm.cout)>toM(editForm.cin)&&<WorkedTime cin={editForm.cin} cout={editForm.cout}/>}
+            {editForm.cin&&editForm.cout&&(toM(editForm.cout)-toM(editForm.cin)>0)&&<WorkedTime cin={editForm.cin} cout={editForm.cout}/>}
             <label style={{ color: "#166534", fontSize: 13, fontWeight: 600, marginBottom: 6, display: "block", marginTop: 10 }}>Reason for edit</label>
             <input style={{ background: "#f0faf4", border: "1.5px solid #86efac", borderRadius: 12, color: "#111827", padding: "12px 14px", fontSize: 14, outline: "none", width: "100%", marginBottom: 12 }}
               placeholder="e.g. Employee forgot to scan" value={editForm.notes} onChange={e => setEditForm(f => ({ ...f, notes: e.target.value }))} />
@@ -1958,7 +1958,7 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
             </div>
             {editRec?.is_early_checkout&&!editRec?.early_penalty_waived&&(
               <button style={{...S.btn,background:"#d97706",marginTop:8}}
-                onClick={async()=>{try{const url="/api/attendance/"+editRec.id+"/waive-early";await PATCH(url,{});notify("Early checkout penalty waived ✓");setEditRec(null);await loadRecords();}catch(e){notify(e.message,"error");}}}>
+                onClick={async()=>{try{await PATCH("/api/attendance/"+editRec.id+"/waive-early",{});notify("Early checkout penalty waived ✓");setEditRec(null);await loadRecords();}catch(e){notify(e.message,"error");}}}>
                 ✅ Waive early checkout penalty
               </button>
             )}

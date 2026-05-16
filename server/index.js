@@ -419,7 +419,7 @@ app.get('/api/shifts', auth(), async (req, res) => {
 });
 
 // GET /api/my-shift-info — returns employee's default shift + org default
-app.get('/api/my-shift-info', auth(['employee']), async (req, res) => {
+app.get('/api/my-shift-info', auth(['employee','branch_admin']), async (req, res) => {
   try {
     const { rows } = await db(`
       SELECT
@@ -556,7 +556,7 @@ app.get('/api/shift-requests', auth(), async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.post('/api/shift-requests', auth(['employee']), async (req, res) => {
+app.post('/api/shift-requests', auth(['employee','branch_admin']), async (req, res) => {
   try {
     const oid = req.user.org_id;
     const { requested_shift_id, date, note, manager_id } = req.body;
@@ -635,7 +635,8 @@ app.get('/api/attendance', auth(), async (req, res) => {
 });
 
 // Check-in
-app.post('/api/attendance/checkin', auth(['employee','branch_admin']), async (req, res) => {  try {
+app.post('/api/attendance/checkin', auth(['employee','branch_admin']), async (req, res) => {
+  try {
     const { branch_id, geo_lat, geo_lng, geo_verified, device_fp } = req.body;
 
     // ── DEVICE BINDING CHECK ─────────────────────────────────
@@ -782,7 +783,8 @@ app.post('/api/attendance/checkin', auth(['employee','branch_admin']), async (re
 });
 
 // Check-out
-app.post('/api/attendance/checkout', auth(['employee','branch_admin']), async (req, res) => {  try {
+app.post('/api/attendance/checkout', auth(['employee','branch_admin']), async (req, res) => {
+  try {
     const { date, time } = nowIST();
     const { rows } = await db(
       `SELECT ar.*, st.end_time AS shift_end
@@ -1022,7 +1024,7 @@ app.get('/api/leaves/audit', auth(['super_admin', 'org_admin', 'branch_admin']),
 // SALARY — employee self-service endpoint (with advance deductions + grace slabs)
 // ============================================================
 
-app.get('/api/my-salary', auth(['employee']), async (req, res) => {
+app.get('/api/my-salary', auth(['employee','branch_admin']), async (req, res) => {
   try {
     const now = new Date();
     const y = parseInt(req.query.year || now.getFullYear());
