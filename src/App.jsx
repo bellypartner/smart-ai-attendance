@@ -681,6 +681,7 @@ function AdminApp({user, notify, page, setPage, activeOrgId, setActiveOrgId, onL
     {k:"adm_leave_hist",i:"📝",l:"Leaves"},
     {k:"adm_daily",i:"🟢",l:"Daily"},
     ...(isSA||isOA?[{k:"adm_advances",i:"💳",l:"Advances"}]:[]),
+    ...(isSA||isOA?[{k:"adm_sal_adj",i:"⚖️",l:"Adj."}]:[]),
     {k:"adm_calendar",i:"🗓",l:"Calendar"},
     {k:"adm_hierarchy",i:"🏛",l:"Hierarchy"},
   ];
@@ -699,6 +700,7 @@ function AdminApp({user, notify, page, setPage, activeOrgId, setActiveOrgId, onL
     adm_leave_hist: <AdminLeaveHistory user={user} notify={notify} activeOrgId={activeOrgId}/>,
     adm_daily: <AdminDailyBoard notify={notify} activeOrgId={activeOrgId}/>,
     adm_advances: <AdminAdvances user={user} notify={notify} activeOrgId={activeOrgId}/>,
+    adm_sal_adj: <SalaryAdjustmentManager notify={notify} activeOrgId={activeOrgId}/>,
     adm_calendar: <AttendanceCalendar user={user} notify={notify} isAdmin={true} activeOrgId={activeOrgId}/>,
     adm_hierarchy: <HierarchyTable user={user} notify={notify} activeOrgId={activeOrgId}/>,
   };
@@ -3477,7 +3479,104 @@ function WorkedTime({cin, cout}) {
   const m = mins - (h * 60);
   return <p style={{color:"#16a34a",fontSize:13,margin:"8px 0"}}>{"⏱ Worked: "+h+"h "+m+"m"}</p>;
 }
+function SalaryAdjustmentManager({notify, activeOrgId}) {
+  const now = new Date();
+  const [employees, setEmployees] = useState([]);
+  useEffect(()=>{ if(activeOrgId) GET("/api/employees",{org_id:activeOrgId}).then(e=>setEmployees(e||[])).catch(()=>{}); },[activeOrgId]);
+  const [selEmp, setSelEmp] = useState("");
+  const [selMonth, setSelMonth] = useState(`${now.getFullYear()}-${pad(now.getMonth()+1)}`);
+  const [adjustments, setAdjustments] = useState([]);
+  const [employees, setEmployees] = useState([]);
+useEffect(()=>{ if(activeOrgId) GET("/api/employees",{org_id:activeOrgId}).then(e=>setEmployees(e||[])).catch(()=>{}); },[activeOrgId]);
+  const [form, setForm] = useState({amount:"", type:"deduction", reason:""});
+  const f=(k,v)=>setForm(p=>({...p,[k]:v}));
 
+  const load = async () => {
+    if(!selEmp) return;
+    const [y,m] = selMonth.split("-").map(Number);
+    GET("/api/salary-adjustments", {employee_id:selEmp, year:y, month:m, org_id:activeOrgId})
+      .then(r=>setAdjustments(r||[])).catch(()=>{});
+  };
+  useEffect(()=>{load();},[selEmp, selMonth]);
+
+  const save = async () => {
+    if(!selEmp){notify("Select employee","error");return;}
+    if(!form.amount||!form.reason){notify("Amount and reason required","error");return;}
+    const [y,m] = selMonth.split("-").map(Number);
+    try {
+      await POST("/api/salary-adjustments", {
+        employee_id:selEmp, amount:Number(form.amount),
+        type:form.type, reason:form.reason, year:y, month:m, org_id:activeOrgId
+      });
+      notify("Adjustment saved ✓");
+      setForm({amount:"", type:"deduction", reason:""});
+      load();
+    } catch(e){notify(e.message,"error");}
+  };
+
+  const del = async (id) => {
+    if(!window.confirm("Delete this adjustment?")) return;
+    try { await DEL(`/api/salary-adjustments/${id}`); notify("Deleted"); load(); }
+    catch(e){notify(e.message,"error");}
+  };
+
+  const netAdj = adjustments.reduce((s,a)=>s+(a.type==='bonus'?Number(a.amount):-Number(a.amount)),0);
+
+  return(
+    <div style={{padding:20}}>
+      <h2 style={{color:C.g800,fontSize:22,fontWeight:800,marginBottom:16}}>Salary Adjustments</h2>
+      <p style={{color:C.gr500,fontSize:13,marginBottom:16}}>Add bonus, deduction or correction to an employee's monthly salary</p>
+
+      <select style={{...S.select,marginBottom:10}} value={selEmp} onChange={e=>setSelEmp(e.target.value)}>
+        <option value="">Select employee</option>
+        {(employees||[]).filter(e=>e.role==="employee"||e.role==="branch_admin").map(e=>(
+          <option key={e.id} value={e.id}>{e.name} — {e.branch_name}</option>
+        ))}
+      </select>
+
+      <input style={{...S.input,marginBottom:16}} type="month" value={selMonth} onChange={e=>setSelMonth(e.target.value)}/>
+
+      {/* Net summary */}
+      {adjustments.length>0&&(
+        <div style={{background:netAdj>=0?C.g50:"#fee2e2",borderRadius:14,padding:14,marginBottom:16,border:`1px solid ${netAdj>=0?C.g300:"#fca5a5"}`}}>
+          <p style={{color:netAdj>=0?C.g700:C.red,fontWeight:800,fontSize:15}}>
+            Net adjustment: {netAdj>=0?"+":""}{fmt(netAdj)}
+          </p>
+        </div>
+      )}
+
+      {/* Add form */}
+      <div style={{background:C.white,borderRadius:16,padding:16,marginBottom:16,boxShadow:`0 2px 8px ${C.g300}33`}}>
+        <p style={{color:C.g800,fontWeight:800,marginBottom:12}}>Add adjustment</p>
+        <select style={{...S.select,marginBottom:10}} value={form.type} onChange={e=>f("type",e.target.value)}>
+          <option value="deduction">Deduction (reduces salary)</option>
+          <option value="bonus">Bonus (adds to salary)</option>
+          <option value="correction">Correction (can be +/-)</option>
+        </select>
+        <input style={{...S.input,marginBottom:10}} type="number" placeholder="Amount (₹)" value={form.amount} onChange={e=>f("amount",e.target.value)}/>
+        <input style={{...S.input,marginBottom:10}} placeholder="Reason (required)" value={form.reason} onChange={e=>f("reason",e.target.value)}/>
+        <button style={S.btn} onClick={save}>Save adjustment</button>
+      </div>
+
+      {/* Existing adjustments */}
+      {adjustments.map(a=>(
+        <div key={a.id} style={{background:C.white,borderRadius:14,padding:14,marginBottom:10,boxShadow:`0 2px 6px ${C.g300}22`,borderLeft:`4px solid ${a.type==='bonus'?C.g600:C.red}`}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+            <div>
+              <p style={{color:a.type==='bonus'?C.g700:C.red,fontWeight:800,fontSize:15}}>
+                {a.type==='bonus'?"+":"-"}{fmt(a.amount)} — {a.type==='bonus'?"Bonus":a.type==='deduction'?"Deduction":"Correction"}
+              </p>
+              <p style={{color:C.gr500,fontSize:13}}>{a.reason}</p>
+              <p style={{color:C.gr400,fontSize:11}}>by {a.created_by_name} · {new Date(a.created_at).toLocaleDateString("en-IN",{day:"numeric",month:"short"})}</p>
+            </div>
+            <button onClick={()=>del(a.id)} style={{background:"#fff",border:`1px solid ${C.red}`,borderRadius:8,padding:"5px 10px",cursor:"pointer",color:C.red,fontSize:12}}>🗑</button>
+          </div>
+        </div>
+      ))}
+      {adjustments.length===0&&selEmp&&<p style={{color:C.gr500,textAlign:"center",padding:20}}>No adjustments this month</p>}
+    </div>
+  );
+}
 // ── STYLES ─────────────────────────────────────────────────────────────────
 const S = {
   label: {color:C.g800,fontSize:13,fontWeight:600,marginBottom:6,display:"block"},

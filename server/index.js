@@ -1105,13 +1105,18 @@ app.get('/api/my-salary', auth(['employee','branch_admin']), async (req, res) =>
       (lateDays >= chronicThreshold ? excessLates * (s.chronic_late_deduction || 200) : 0);
 
     const halfDayDeduction = halfDays * (dailyRate / 2);
-const leaveDeductions = (unauthLeaves * dailyRate) + (clExcess * dailyRate) + (slExcess * dailyRate) + halfDayDeduction;
+    const leaveDeductions = (unauthLeaves * dailyRate) + (clExcess * dailyRate) + (slExcess * dailyRate) + halfDayDeduction;
     const noShowDeductions = noShows * dailyRate;
     const earlyDeductions = earlyCheckouts * (s.early_checkout_flat_penalty || 50) +
       Math.round((earlyMinsTotal / 60) * hourlyRate);
     const advanceDeduction = Number(advRows[0]?.monthly_deduction || 0);
+    const { rows: adjRows } = await db(`
+      SELECT COALESCE(SUM(CASE WHEN type='bonus' THEN amount ELSE -amount END),0) AS net_adjustment
+      FROM salary_adjustments WHERE employee_id=$1 AND year=$2 AND month=$3
+      `, [req.user.id, y, m]);
+    const netAdjustment = Number(adjRows[0]?.net_adjustment || 0);
     const totalDeductions = lateDeductions + leaveDeductions + noShowDeductions + earlyDeductions + advanceDeduction;
-
+    const netEarned = Math.max(0, earnedGross - totalDeductions) + netAdjustment;
     res.json({
       salary, workingDays: divisor, presentDays, lateDays, clUsed, slUsed,
       clAllowed, slAllowed, clExcess, slExcess,
@@ -1119,7 +1124,7 @@ const leaveDeductions = (unauthLeaves * dailyRate) + (clExcess * dailyRate) + (s
       dailyRate, earnedGross, lateDeductions,
       leaveDeductions, noShowDeductions, earlyDeductions,
       earlyCheckouts, advanceDeduction,
-      totalDeductions, netEarned: Math.max(0, earnedGross - totalDeductions),
+      totalDeductions, netEarned, netAdjustment,
       category: cat?.name || null,
     });
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -1497,6 +1502,49 @@ app.delete('/api/job-categories/:id', auth(['super_admin','org_admin']), async (
 });
 
 // ============================================================
+// ============================================================
+// SALARY ADJUSTMENTS
+// ============================================================
+
+app.get('/api/salary-adjustments', auth(['super_admin','org_admin','branch_admin']), async (req, res) => {
+  try {
+    const oid = orgId(req);
+    const { employee_id, year, month } = req.query;
+    const { rows } = await db(`
+      SELECT sa.*, u.name AS employee_name, cb.name AS created_by_name
+      FROM salary_adjustments sa
+      JOIN users u ON u.id = sa.employee_id
+      LEFT JOIN users cb ON cb.id = sa.created_by
+      WHERE sa.org_id=$1
+        ${employee_id ? 'AND sa.employee_id=$2' : ''}
+        ${year ? `AND sa.year=${parseInt(year)}` : ''}
+        ${month ? `AND sa.month=${parseInt(month)}` : ''}
+      ORDER BY sa.created_at DESC LIMIT 100
+    `, employee_id ? [oid, employee_id] : [oid]);
+    res.json(rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/salary-adjustments', auth(['super_admin','org_admin']), async (req, res) => {
+  try {
+    const oid = orgId(req);
+    const { employee_id, amount, type, reason, year, month } = req.body;
+    if(!reason?.trim()) return res.status(400).json({ error: 'Reason is required' });
+    const { rows } = await db(`
+      INSERT INTO salary_adjustments (org_id,employee_id,amount,type,reason,year,month,created_by)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *
+    `, [oid, employee_id, amount, type||'deduction', reason, year, month, req.user.id]);
+    res.json(rows[0]);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/salary-adjustments/:id', auth(['super_admin','org_admin']), async (req, res) => {
+  try {
+    await db('DELETE FROM salary_adjustments WHERE id=$1', [req.params.id]);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // AUTO-CHECKOUT CRON — with 15 min grace window
 // ============================================================
 
