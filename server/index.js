@@ -857,8 +857,23 @@ app.post('/api/attendance/admin-mark', auth(['super_admin', 'org_admin', 'branch
       'SELECT is_late, late_mins FROM attendance_records WHERE employee_id=$1 AND date::text=$2 LIMIT 1',
       [employee_id, date]
     );
-    const keepIsLate = existing[0]?.is_late || false;
-    const keepLateMins = existing[0]?.late_mins || 0;
+    // Recalculate late based on NEW check-in time
+const { rows: shiftRows } = await db(`
+  SELECT st.start_time FROM shift_templates st
+  JOIN users u ON u.default_shift_id = st.id
+  WHERE u.id = $1
+  UNION
+  SELECT st.start_time FROM org_settings os
+  JOIN shift_templates st ON st.id = os.default_shift_id
+  WHERE os.org_id = (SELECT org_id FROM users WHERE id=$1)
+  LIMIT 1
+`, [employee_id]);
+const { rows: settRows2 } = await db('SELECT grace_period_mins FROM org_settings WHERE org_id=(SELECT org_id FROM users WHERE id=$1)', [employee_id]);
+const grace2 = settRows2[0]?.grace_period_mins || 15;
+const shiftStart2 = shiftRows[0]?.start_time ? toMins(String(shiftRows[0].start_time).slice(0,5)) : null;
+const newCinMins = toMins(check_in_time);
+const keepIsLate = shiftStart2 ? (newCinMins - shiftStart2 > grace2) : false;
+const keepLateMins = shiftStart2 ? Math.max(0, newCinMins - shiftStart2) : 0;
 
     await db(`
       INSERT INTO attendance_records
@@ -1526,7 +1541,8 @@ app.post('/api/cron/auto-checkout', async (req, res) => {
 });
 
 // ============================================================
-// CATCH-ALL — Serve React PWA
+// CATCH-ALL — Serve React PW
+//A
 // ============================================================
 app.get('*', (req, res) => {
   res.sendFile(path.join(DIST, 'index.html'));

@@ -184,16 +184,19 @@ function QRCanvas({data:qd, size=200}) {
 // ── QR SCANNER ─────────────────────────────────────────────────────────────
 function QRScanner({onScan, onClose, branches, user}) {
   useEffect(()=>{
-    // Auto-detect branch from user's assigned branch
-    const userBranch = branches.find(b=>b.id===user.branch_id);
+    if(!branches || branches.length === 0) {
+      alert("Branch data not loaded yet. Please try again.");
+      onClose();
+      return;
+    }
+    const userBranch = branches.find(b=>b.id===user?.branch_id);
     if(userBranch) {
       onScan({branchId:userBranch.id, token:"SMARTAI_V4", app:"3SL"});
     } else {
-      // No branch assigned — show error
-      alert("No branch assigned to your account. Contact your admin.");
+      alert("No branch assigned to your account. Contact your Org Admin.");
       onClose();
     }
-  },[]);
+  },[branches]);
   return null;
 }
 
@@ -373,7 +376,7 @@ function EmpApp({user, notify, page, setPage, onLogout}) {
   };
   return(
     <div style={{display:"flex",flexDirection:"column",height:"100vh",maxWidth:480,margin:"0 auto",background:C.g50}}>
-      {showScanner&&<QRScanner onScan={handleScan} onClose={()=>setShowScanner(false)} branches={myBranches}/>}
+      {showScanner&&<QRScanner onScan={handleScan} onClose={()=>setShowScanner(false)} branches={myBranches} user={user}/>}
       <TopBar user={user} onLogout={onLogout}/>
       <div style={{flex:1,overflowY:"auto",paddingBottom:80}}>{pages[page]||pages.home}</div>
       <BottomNav items={empNav} page={page} setPage={setPage}/>
@@ -908,7 +911,7 @@ function LeaveForm({employees, onSubmit}) {
         <option value="">Select employee</option>{employees.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}
       </select>
       <select style={S.select} value={type} onChange={e=>setType(e.target.value)}>
-        <option value="casual">Casual leave</option><option value="unauthorized">Unauthorized leave</option><option value="noshow">No show</option>
+        <option value="casual">Casual leave</option> <option value="half_day">Half Day</option><option value="unauthorized">Unauthorized leave</option><option value="noshow">No show</option>
       </select>
       <input style={S.input} type="date" value={dt} onChange={e=>setDt(e.target.value)}/>
       <input style={S.input} placeholder="Reason (optional)" value={reason} onChange={e=>setReason(e.target.value)}/>
@@ -1658,7 +1661,7 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
   const getStatus = (empId, date) => {
     const leave = getLeave(empId, date);
     if (leave) {
-      const lc = { casual: { label:"CL", color:"#7c3aed", bg:"#ede9fe" }, unauthorized: { label:"UL", color:"#dc2626", bg:"#fee2e2" }, noshow: { label:"NS", color:"#ea580c", bg:"#ffedd5" } };
+      const lc = { casual: { label:"CL", color:"#7c3aed", bg:"#ede9fe" }, half_day: { label: "Half Day", color: "#7c3aed", bg: "#ede9fe" }, unauthorized: { label:"UL", color:"#dc2626", bg:"#fee2e2" }, noshow: { label:"NS", color:"#ea580c", bg:"#ffedd5" } };
       return { type: "leave", ...(lc[leave.type] || { label: "L", color: "#7c3aed", bg: "#ede9fe" }) };
     }
     const rec = getRec(empId, date);
@@ -3093,7 +3096,7 @@ function BranchAdminPersonalView({user, notify, page, setPage}) {
 
   return(
     <>
-      {showScanner&&<QRScanner onScan={handleScan} onClose={()=>setShowScanner(false)} branches={branches}/>}
+      {showScanner&&<QRScanner onScan={handleScan} onClose={()=>setShowScanner(false)} branches={branches} user={user}/>}
       <div style={{flex:1,overflowY:"auto",paddingBottom:80}}>{empPages[page]||empPages.home}</div>
       <BottomNav items={empNav} page={page} setPage={setPage}/>
     </>
