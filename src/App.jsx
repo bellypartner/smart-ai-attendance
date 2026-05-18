@@ -3486,8 +3486,6 @@ function SalaryAdjustmentManager({notify, activeOrgId}) {
   const [selEmp, setSelEmp] = useState("");
   const [selMonth, setSelMonth] = useState(`${now.getFullYear()}-${pad(now.getMonth()+1)}`);
   const [adjustments, setAdjustments] = useState([]);
-  const [employees, setEmployees] = useState([]);
-useEffect(()=>{ if(activeOrgId) GET("/api/employees",{org_id:activeOrgId}).then(e=>setEmployees(e||[])).catch(()=>{}); },[activeOrgId]);
   const [form, setForm] = useState({amount:"", type:"deduction", reason:""});
   const f=(k,v)=>setForm(p=>({...p,[k]:v}));
 
