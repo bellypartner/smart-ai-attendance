@@ -182,89 +182,19 @@ function QRCanvas({data:qd, size=200}) {
 }
 
 // ── QR SCANNER ─────────────────────────────────────────────────────────────
-function QRScanner({onScan, onClose, branches}) {
-  const vRef=useRef(null);
-  const [err,setErr]=useState(null);
-  const [streaming,setStreaming]=useState(false);
-  const [selBranch,setSelBranch]=useState(branches[0]?.id||"");
-  const canvasRef = useRef(null);
+function QRScanner({onScan, onClose, branches, user}) {
   useEffect(()=>{
-    let st, animFrame;
-    navigator.mediaDevices?.getUserMedia({video:{facingMode:"environment"}})
-      .then(s=>{
-        st=s;
-        if(vRef.current) vRef.current.srcObject=s;
-        setStreaming(true);
-        // Start QR scanning loop
-        const scan = () => {
-          if(vRef.current && vRef.current.readyState === vRef.current.HAVE_ENOUGH_DATA) {
-            const cv = canvasRef.current;
-            if(cv) {
-              cv.width = vRef.current.videoWidth;
-              cv.height = vRef.current.videoHeight;
-              const ctx = cv.getContext('2d');
-              ctx.drawImage(vRef.current, 0, 0, cv.width, cv.height);
-              const img = ctx.getImageData(0, 0, cv.width, cv.height);
-              import('jsqr').then(({default:jsQR})=>{
-                const code = jsQR(img.data, img.width, img.height);
-                if(code) {
-                  try {
-                    const data = JSON.parse(code.data);
-                    if(data.branchId && data.token === 'SMARTAI_V4') {
-                      onScan(data);
-                      return;
-                    }
-                  } catch(e) {}
-                }
-              });
-            }
-          }
-          animFrame = requestAnimationFrame(scan);
-        };
-        animFrame = requestAnimationFrame(scan);
-      })
-      .catch(()=>setErr("Camera unavailable"));
-    return ()=>{
-      st?.getTracks().forEach(t=>t.stop());
-      if(animFrame) cancelAnimationFrame(animFrame);
-    };
+    // Auto-detect branch from user's assigned branch
+    const userBranch = branches.find(b=>b.id===user.branch_id);
+    if(userBranch) {
+      onScan({branchId:userBranch.id, token:"SMARTAI_V4", app:"3SL"});
+    } else {
+      // No branch assigned — show error
+      alert("No branch assigned to your account. Contact your admin.");
+      onClose();
+    }
   },[]);
-  return(
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.72)",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:999}}>
-      <div style={{background:C.white,borderRadius:"28px 28px 0 0",padding:24,width:"100%",maxWidth:480,animation:"slideUp .3s ease"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
-          <div>
-            <h3 style={{fontSize:18,fontWeight:800,color:C.g800}}>Mark Attendance</h3>
-            <p style={{color:C.gr500,fontSize:12}}>Scan QR or select your branch below</p>
-          </div>
-          <button onClick={onClose} style={S.iconBtn}>✕</button>
-        </div>
-        <div style={{background:"#000",borderRadius:18,height:300,width:"100%",position:"relative",overflow:"hidden",marginBottom:14}}>
-          <video ref={vRef} autoPlay playsInline muted style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-<canvas ref={canvasRef} style={{display:"none"}}/>
-          <div style={{position:"absolute",inset:14,border:`2px solid ${C.g500}`,borderRadius:10}}/>
-          {streaming&&<div style={{position:"absolute",left:14,right:14,height:2,background:`linear-gradient(90deg,transparent,${C.g500},transparent)`,top:"40%",animation:"scanline 2s ease-in-out infinite"}}/>}
-        </div>
-        {err&&(
-          <div style={{background:"#fffbeb",border:"1px solid #fcd34d",borderRadius:12,padding:12,marginBottom:8}}>
-            <p style={{color:"#92400e",fontWeight:700,fontSize:13}}>⚠ {err}</p>
-            <p style={{color:"#78350f",fontSize:12,marginTop:4}}>Camera not available — select your branch below and tap Mark Attendance directly. Your location will still be verified.</p>
-          </div>
-        )}
-        <p style={{color:C.g700,fontSize:13,fontWeight:700,marginBottom:8}}>Select your branch:</p>
-        <select style={{...S.select,marginBottom:10}} value={selBranch} onChange={e=>setSelBranch(e.target.value)}>
-          <option value="">— Select branch —</option>
-          {branches.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}
-        </select>
-        <button onClick={()=>{if(!selBranch){setErr("Select a branch first");return;}onScan({branchId:selBranch,token:"SMARTAI_V4",app:"3SL"});}}
-          disabled={!selBranch}
-          style={{...S.btn,opacity:selBranch?1:0.5}}>
-          📍 Mark at {branches.find(b=>b.id===selBranch)?.name||"Branch"}
-        </button>
-        <p style={{color:C.gr500,fontSize:11,textAlign:"center",marginTop:8}}>Your location will be verified automatically</p>
-      </div>
-    </div>
-  );
+  return null;
 }
 
 // ── LOADING & ERROR ────────────────────────────────────────────────────────
@@ -493,8 +423,8 @@ function EmpHome({user, branch, todayAtt, loading, onScan}) {
             {isMobile()
         ? <button onClick={onScan} disabled={status==="done"||loading}
         style={{width:"100%",background:status==="done"?C.gr300:`linear-gradient(135deg,${C.g700},${C.g500})`,border:"none",borderRadius:20,padding:"20px",cursor:status==="done"?"not-allowed":"pointer",color:C.white,display:"flex",flexDirection:"column",alignItems:"center",gap:6,animation:status!=="done"?"glow 3s infinite":"none",marginBottom:18}}>
-        <span style={{fontSize:32}}>📷</span>
-        <span style={{fontSize:16,fontWeight:800}}>{status==="out"?"Scan to Check In — Shift 1":status==="in"?"Scan to Check Out":status==="between"?"Scan to Check In — Shift 2":"Day Complete ✓"}</span>
+        <span style={{fontSize:32}}>📍</span> 
+        <span style={{fontSize:16,fontWeight:800}}>{status==="out"?"Mark Check In":status==="in"?"Mark Check Out":status==="between"?"Mark Check In — Shift 2":"Day Complete ✓"}</span>
         <span style={{fontSize:12,opacity:0.75}}>Geo-fenced · Tap to mark attendance</span>
       </button>
         : (status!=="done"&&<div style={{background:"#f0faf4",border:"1.5px dashed #86efac",borderRadius:18,padding:"20px",textAlign:"center",marginBottom:18}}>
