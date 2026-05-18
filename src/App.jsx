@@ -187,12 +187,47 @@ function QRScanner({onScan, onClose, branches}) {
   const [err,setErr]=useState(null);
   const [streaming,setStreaming]=useState(false);
   const [selBranch,setSelBranch]=useState(branches[0]?.id||"");
+  const canvasRef = useRef(null);
   useEffect(()=>{
-    let st;
+    let st, animFrame;
     navigator.mediaDevices?.getUserMedia({video:{facingMode:"environment"}})
-      .then(s=>{st=s;if(vRef.current)vRef.current.srcObject=s;setStreaming(true);})
+      .then(s=>{
+        st=s;
+        if(vRef.current) vRef.current.srcObject=s;
+        setStreaming(true);
+        // Start QR scanning loop
+        const scan = () => {
+          if(vRef.current && vRef.current.readyState === vRef.current.HAVE_ENOUGH_DATA) {
+            const cv = canvasRef.current;
+            if(cv) {
+              cv.width = vRef.current.videoWidth;
+              cv.height = vRef.current.videoHeight;
+              const ctx = cv.getContext('2d');
+              ctx.drawImage(vRef.current, 0, 0, cv.width, cv.height);
+              const img = ctx.getImageData(0, 0, cv.width, cv.height);
+              import('jsqr').then(({default:jsQR})=>{
+                const code = jsQR(img.data, img.width, img.height);
+                if(code) {
+                  try {
+                    const data = JSON.parse(code.data);
+                    if(data.branchId && data.token === 'SMARTAI_V4') {
+                      onScan(data);
+                      return;
+                    }
+                  } catch(e) {}
+                }
+              });
+            }
+          }
+          animFrame = requestAnimationFrame(scan);
+        };
+        animFrame = requestAnimationFrame(scan);
+      })
       .catch(()=>setErr("Camera unavailable"));
-    return ()=>st?.getTracks().forEach(t=>t.stop());
+    return ()=>{
+      st?.getTracks().forEach(t=>t.stop());
+      if(animFrame) cancelAnimationFrame(animFrame);
+    };
   },[]);
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.72)",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:999}}>
@@ -206,6 +241,7 @@ function QRScanner({onScan, onClose, branches}) {
         </div>
         <div style={{background:"#000",borderRadius:18,height:300,width:"100%",position:"relative",overflow:"hidden",marginBottom:14}}>
           <video ref={vRef} autoPlay playsInline muted style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+<canvas ref={canvasRef} style={{display:"none"}}/>
           <div style={{position:"absolute",inset:14,border:`2px solid ${C.g500}`,borderRadius:10}}/>
           {streaming&&<div style={{position:"absolute",left:14,right:14,height:2,background:`linear-gradient(90deg,transparent,${C.g500},transparent)`,top:"40%",animation:"scanline 2s ease-in-out infinite"}}/>}
         </div>
