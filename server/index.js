@@ -857,23 +857,30 @@ app.post('/api/attendance/admin-mark', auth(['super_admin', 'org_admin', 'branch
       'SELECT is_late, late_mins FROM attendance_records WHERE employee_id=$1 AND date::text=$2 LIMIT 1',
       [employee_id, date]
     );
-    // Recalculate late based on NEW check-in time
-const { rows: shiftRows } = await db(`
-  SELECT st.start_time FROM shift_templates st
-  JOIN users u ON u.default_shift_id = st.id
-  WHERE u.id = $1
-  UNION
-  SELECT st.start_time FROM org_settings os
-  JOIN shift_templates st ON st.id = os.default_shift_id
-  WHERE os.org_id = (SELECT org_id FROM users WHERE id=$1)
-  LIMIT 1
-`, [employee_id]);
-const { rows: settRows2 } = await db('SELECT grace_period_mins FROM org_settings WHERE org_id=(SELECT org_id FROM users WHERE id=$1)', [employee_id]);
-const grace2 = settRows2[0]?.grace_period_mins || 15;
-const shiftStart2 = shiftRows[0]?.start_time ? toMins(String(shiftRows[0].start_time).slice(0,5)) : null;
+    // Recalculate late based on new check-in time
+const { rows: shiftInfo } = await db(`
+  SELECT COALESCE(
+    (SELECT st.start_time FROM shift_schedules ss 
+     JOIN shift_templates st ON st.id=ss.shift_id
+     WHERE ss.employee_id=$1 AND ss.date::text=$2 
+     ORDER BY ss.is_override DESC LIMIT 1),
+    (SELECT st.start_time FROM users u 
+     JOIN shift_templates st ON st.id=u.default_shift_id WHERE u.id=$1),
+    (SELECT st.start_time FROM org_settings os 
+     JOIN shift_templates st ON st.id=os.default_shift_id
+     WHERE os.org_id=(SELECT org_id FROM users WHERE id=$1))
+  ) AS start_time
+`, [employee_id, date]);
+const { rows: graceInfo } = await db(
+  'SELECT grace_period_mins FROM org_settings WHERE org_id=(SELECT org_id FROM users WHERE id=$1)',
+  [employee_id]
+);
+const grace2 = graceInfo[0]?.grace_period_mins || 15;
+const shiftStartMins2 = shiftInfo[0]?.start_time
+  ? toMins(String(shiftInfo[0].start_time).slice(0,5)) : null;
 const newCinMins = toMins(check_in_time);
-const keepIsLate = shiftStart2 ? (newCinMins - shiftStart2 > grace2) : false;
-const keepLateMins = shiftStart2 ? Math.max(0, newCinMins - shiftStart2) : 0;
+const keepIsLate = shiftStartMins2 !== null ? (newCinMins - shiftStartMins2 > grace2) : false;
+const keepLateMins = shiftStartMins2 !== null ? Math.max(0, newCinMins - shiftStartMins2) : 0;
 
     await db(`
       INSERT INTO attendance_records
@@ -1070,6 +1077,7 @@ app.get('/api/my-salary', auth(['employee','branch_admin']), async (req, res) =>
     const presentDays = att.filter(a => a.check_in_time).length;
     const lateDays = att.filter(a => a.is_late && a.approval_status !== 'rejected').length;
     const clUsed = lvs.filter(l => l.type === 'casual').length;
+    const halfDays = lvs.filter(l => l.type === 'half_day').length;
     const slUsed = lvs.filter(l => l.type === 'sick').length;
     const unauthLeaves = lvs.filter(l => l.type === 'unauthorized').length;
     const noShows = lvs.filter(l => l.type === 'noshow').length;
@@ -1096,7 +1104,8 @@ app.get('/api/my-salary', auth(['employee','branch_admin']), async (req, res) =>
       (excessLates > 0 ? excessLates * (s.excess_late_deduction || 100) : 0) +
       (lateDays >= chronicThreshold ? excessLates * (s.chronic_late_deduction || 200) : 0);
 
-    const leaveDeductions = (unauthLeaves * dailyRate) + (clExcess * dailyRate) + (slExcess * dailyRate);
+    const halfDayDeduction = halfDays * (dailyRate / 2);
+const leaveDeductions = (unauthLeaves * dailyRate) + (clExcess * dailyRate) + (slExcess * dailyRate) + halfDayDeduction;
     const noShowDeductions = noShows * dailyRate;
     const earlyDeductions = earlyCheckouts * (s.early_checkout_flat_penalty || 50) +
       Math.round((earlyMinsTotal / 60) * hourlyRate);
