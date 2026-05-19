@@ -8,7 +8,7 @@ const client = new Client({
 
 async function run() {
   await client.connect();
-  const sql = fs.readFileSync('supabase/migration_v3.sql', 'utf8');
+  const sql = fs.readFileSync('supabase/migration_kpi.sql', 'utf8');
   await client.query(sql);
   console.log('Migration v3 done!');
   await client.end();

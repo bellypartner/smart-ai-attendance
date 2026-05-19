@@ -182,22 +182,53 @@ function QRCanvas({data:qd, size=200}) {
 }
 
 // ── QR SCANNER ─────────────────────────────────────────────────────────────
-function QRScanner({onScan, onClose, branches, user}) {
+function QRScanner({onScan, onClose, branches}) {
+  const vRef=useRef(null);
+  const [err,setErr]=useState(null);
+  const [streaming,setStreaming]=useState(false);
+  const [selBranch,setSelBranch]=useState(branches[0]?.id||"");
   useEffect(()=>{
-    if(!branches || branches.length === 0) {
-      alert("Branch data not loaded yet. Please try again.");
-      onClose();
-      return;
-    }
-    const userBranch = branches.find(b=>b.id===user?.branch_id);
-    if(userBranch) {
-      onScan({branchId:userBranch.id, token:"SMARTAI_V4", app:"3SL"});
-    } else {
-      alert("No branch assigned to your account. Contact your Org Admin.");
-      onClose();
-    }
-  },[branches]);
-  return null;
+    let st;
+    navigator.mediaDevices?.getUserMedia({video:{facingMode:"environment"}})
+      .then(s=>{st=s;if(vRef.current)vRef.current.srcObject=s;setStreaming(true);})
+      .catch(()=>setErr("Camera unavailable"));
+    return ()=>st?.getTracks().forEach(t=>t.stop());
+  },[]);
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.72)",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:999}}>
+      <div style={{background:C.white,borderRadius:"28px 28px 0 0",padding:24,width:"100%",maxWidth:480,animation:"slideUp .3s ease"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+          <div>
+            <h3 style={{fontSize:18,fontWeight:800,color:C.g800}}>Mark Attendance</h3>
+            <p style={{color:C.gr500,fontSize:12}}>Scan QR or select your branch below</p>
+          </div>
+          <button onClick={onClose} style={S.iconBtn}>✕</button>
+        </div>
+        <div style={{background:"#000",borderRadius:18,height:300,width:"100%",position:"relative",overflow:"hidden",marginBottom:14}}>
+          <video ref={vRef} autoPlay playsInline muted style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+          <div style={{position:"absolute",inset:14,border:`2px solid ${C.g500}`,borderRadius:10}}/>
+          {streaming&&<div style={{position:"absolute",left:14,right:14,height:2,background:`linear-gradient(90deg,transparent,${C.g500},transparent)`,top:"40%",animation:"scanline 2s ease-in-out infinite"}}/>}
+        </div>
+        {err&&(
+          <div style={{background:"#fffbeb",border:"1px solid #fcd34d",borderRadius:12,padding:12,marginBottom:8}}>
+            <p style={{color:"#92400e",fontWeight:700,fontSize:13}}>⚠ {err}</p>
+            <p style={{color:"#78350f",fontSize:12,marginTop:4}}>Camera not available — select your branch below and tap Mark Attendance directly. Your location will still be verified.</p>
+          </div>
+        )}
+        <p style={{color:C.g700,fontSize:13,fontWeight:700,marginBottom:8}}>Select your branch:</p>
+        <select style={{...S.select,marginBottom:10}} value={selBranch} onChange={e=>setSelBranch(e.target.value)}>
+          <option value="">— Select branch —</option>
+          {branches.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}
+        </select>
+        <button onClick={()=>{if(!selBranch){setErr("Select a branch first");return;}onScan({branchId:selBranch,token:"SMARTAI_V4",app:"3SL"});}}
+          disabled={!selBranch}
+          style={{...S.btn,opacity:selBranch?1:0.5}}>
+          📍 Mark at {branches.find(b=>b.id===selBranch)?.name||"Branch"}
+        </button>
+        <p style={{color:C.gr500,fontSize:11,textAlign:"center",marginTop:8}}>Your location will be verified automatically</p>
+      </div>
+    </div>
+  );
 }
 
 // ── LOADING & ERROR ────────────────────────────────────────────────────────
@@ -364,7 +395,7 @@ function EmpApp({user, notify, page, setPage, onLogout}) {
   const myBranch = branches.find(b=>b.id===user.branch_id);
   const myBranches = branches.filter(b=>b.org_id===user.org_id);
 
-  const empNav=[{k:"home",i:"🏠",l:"Home"},{k:"shifts",i:"📅",l:"Shifts"},{k:"history",i:"📋",l:"History"},{k:"salary",i:"💰",l:"Salary"},{k:"advances",i:"💳",l:"Advance"},{k:"calendar",i:"📅",l:"Calendar"},{k:"profile",i:"👤",l:"Profile"}];
+  const empNav=[{k:"home",i:"🏠",l:"Home"},{k:"shifts",i:"📅",l:"Shifts"},{k:"history",i:"📋",l:"History"},{k:"salary",i:"💰",l:"Salary"},{k:"advances",i:"💳",l:"Advance"},{k:"calendar",i:"📅",l:"Calendar"},,{k:"kpi",i:"📊",l:"KPI"},{k:"tasks",i:"✔️",l:"Tasks"},{k:"profile",i:"👤",l:"Profile"}];
   const pages={
     home: <EmpHome user={user} branch={myBranch} todayAtt={todayAtt} loading={loading} onScan={()=>setShowScanner(true)}/>,
     shifts: <EmpShifts user={user} notify={notify}/>,
@@ -373,10 +404,12 @@ function EmpApp({user, notify, page, setPage, onLogout}) {
     profile: <EmpProfile user={user} notify={notify}/>,
     advances: <EmpAdvances user={user} notify={notify}/>,
     calendar: <AttendanceCalendar user={user} notify={notify} isAdmin={false} activeOrgId={user.org_id}/>,
+      kpi: <KPIDailyEntry user={user} notify={notify}/>,
+      tasks: <TaskManager user={user} notify={notify} activeOrgId={user.org_id} isAdminView={false}/>,
   };
   return(
     <div style={{display:"flex",flexDirection:"column",height:"100vh",maxWidth:480,margin:"0 auto",background:C.g50}}>
-      {showScanner&&<QRScanner onScan={handleScan} onClose={()=>setShowScanner(false)} branches={myBranches} user={user}/>}
+      {showScanner&&<QRScanner onScan={handleScan} onClose={()=>setShowScanner(false)} branches={myBranches}/>}
       <TopBar user={user} onLogout={onLogout}/>
       <div style={{flex:1,overflowY:"auto",paddingBottom:80}}>{pages[page]||pages.home}</div>
       <BottomNav items={empNav} page={page} setPage={setPage}/>
@@ -426,8 +459,8 @@ function EmpHome({user, branch, todayAtt, loading, onScan}) {
             {isMobile()
         ? <button onClick={onScan} disabled={status==="done"||loading}
         style={{width:"100%",background:status==="done"?C.gr300:`linear-gradient(135deg,${C.g700},${C.g500})`,border:"none",borderRadius:20,padding:"20px",cursor:status==="done"?"not-allowed":"pointer",color:C.white,display:"flex",flexDirection:"column",alignItems:"center",gap:6,animation:status!=="done"?"glow 3s infinite":"none",marginBottom:18}}>
-        <span style={{fontSize:32}}>📍</span> 
-        <span style={{fontSize:16,fontWeight:800}}>{status==="out"?"Mark Check In":status==="in"?"Mark Check Out":status==="between"?"Mark Check In — Shift 2":"Day Complete ✓"}</span>
+        <span style={{fontSize:32}}>📷</span>
+        <span style={{fontSize:16,fontWeight:800}}>{status==="out"?"Scan to Check In — Shift 1":status==="in"?"Scan to Check Out":status==="between"?"Scan to Check In — Shift 2":"Day Complete ✓"}</span>
         <span style={{fontSize:12,opacity:0.75}}>Geo-fenced · Tap to mark attendance</span>
       </button>
         : (status!=="done"&&<div style={{background:"#f0faf4",border:"1.5px dashed #86efac",borderRadius:18,padding:"20px",textAlign:"center",marginBottom:18}}>
@@ -681,9 +714,16 @@ function AdminApp({user, notify, page, setPage, activeOrgId, setActiveOrgId, onL
     {k:"adm_leave_hist",i:"📝",l:"Leaves"},
     {k:"adm_daily",i:"🟢",l:"Daily"},
     ...(isSA||isOA?[{k:"adm_advances",i:"💳",l:"Advances"}]:[]),
-    ...(isSA||isOA?[{k:"adm_sal_adj",i:"⚖️",l:"Adj."}]:[]),
     {k:"adm_calendar",i:"🗓",l:"Calendar"},
     {k:"adm_hierarchy",i:"🏛",l:"Hierarchy"},
+    ...(isSA||isOA?[
+      {k:"adm_kpi_templates",i:"📊",l:"KPIs"},
+      {k:"adm_kpi_review",i:"✅",l:"KPI Review"},
+      {k:"adm_kpi_scores",i:"🏆",l:"Scores"},
+      {k:"adm_tasks",i:"✔️",l:"Tasks"},
+    ]:[
+      {k:"adm_tasks",i:"✔️",l:"Tasks"},
+    ]),
   ];
   const pages={
     sa_orgs: <SuperAdminOrgs notify={notify} setActiveOrgId={setActiveOrgId} setPage={setPage} activeOrgId={activeOrgId}/>,
@@ -700,9 +740,12 @@ function AdminApp({user, notify, page, setPage, activeOrgId, setActiveOrgId, onL
     adm_leave_hist: <AdminLeaveHistory user={user} notify={notify} activeOrgId={activeOrgId}/>,
     adm_daily: <AdminDailyBoard notify={notify} activeOrgId={activeOrgId}/>,
     adm_advances: <AdminAdvances user={user} notify={notify} activeOrgId={activeOrgId}/>,
-    adm_sal_adj: <SalaryAdjustmentManager notify={notify} activeOrgId={activeOrgId}/>,
     adm_calendar: <AttendanceCalendar user={user} notify={notify} isAdmin={true} activeOrgId={activeOrgId}/>,
     adm_hierarchy: <HierarchyTable user={user} notify={notify} activeOrgId={activeOrgId}/>,
+    adm_kpi_templates: <KPITemplateManager notify={notify} activeOrgId={activeOrgId}/>,
+    adm_kpi_review: <KPIReview notify={notify} activeOrgId={activeOrgId}/>,
+    adm_kpi_scores: <KPIScores notify={notify} activeOrgId={activeOrgId} user={user}/>,
+    adm_tasks: <TaskManager user={user} notify={notify} activeOrgId={activeOrgId} isAdminView={true}/>,
   };
   const isDesktop = (isSA||isOA||isBA) && window.innerWidth >= 1024;
 
@@ -913,7 +956,7 @@ function LeaveForm({employees, onSubmit}) {
         <option value="">Select employee</option>{employees.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}
       </select>
       <select style={S.select} value={type} onChange={e=>setType(e.target.value)}>
-        <option value="casual">Casual leave</option> <option value="half_day">Half Day</option><option value="unauthorized">Unauthorized leave</option><option value="noshow">No show</option>
+        <option value="casual">Casual leave</option><option value="unauthorized">Unauthorized leave</option><option value="noshow">No show</option>
       </select>
       <input style={S.input} type="date" value={dt} onChange={e=>setDt(e.target.value)}/>
       <input style={S.input} placeholder="Reason (optional)" value={reason} onChange={e=>setReason(e.target.value)}/>
@@ -1542,6 +1585,7 @@ function AdminSettings({user, notify, activeOrgId}) {
       )}
       {(user.role==="super_admin"||user.role==="org_admin")&&<DeviceBlockManager notify={notify} activeOrgId={activeOrgId}/>}
       {(user.role==="super_admin"||user.role==="org_admin")&&<JobCategoriesManager notify={notify} activeOrgId={activeOrgId}/>}
+      {(user.role==="super_admin"||user.role==="org_admin")&&<BrandManager notify={notify} activeOrgId={activeOrgId}/>}
     </div>
   );
 }
@@ -1663,7 +1707,7 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
   const getStatus = (empId, date) => {
     const leave = getLeave(empId, date);
     if (leave) {
-      const lc = { casual: { label:"CL", color:"#7c3aed", bg:"#ede9fe" }, half_day: { label: "Half Day", color: "#7c3aed", bg: "#ede9fe" }, unauthorized: { label:"UL", color:"#dc2626", bg:"#fee2e2" }, noshow: { label:"NS", color:"#ea580c", bg:"#ffedd5" } };
+      const lc = { casual: { label:"CL", color:"#7c3aed", bg:"#ede9fe" }, unauthorized: { label:"UL", color:"#dc2626", bg:"#fee2e2" }, noshow: { label:"NS", color:"#ea580c", bg:"#ffedd5" } };
       return { type: "leave", ...(lc[leave.type] || { label: "L", color: "#7c3aed", bg: "#ede9fe" }) };
     }
     const rec = getRec(empId, date);
@@ -1933,9 +1977,10 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
                 ✅ Waive early checkout penalty
               </button>
             )}
+            </div>
           </div>
-        </div>
-      )}
+        )
+      }
     </div>
   );
 }
@@ -3086,19 +3131,21 @@ function BranchAdminPersonalView({user, notify, page, setPage}) {
   };
 
   const myBranch = branches.find(b=>b.id===user.branch_id);
-  const empNav=[{k:"home",i:"🏠",l:"Home"},{k:"shifts",i:"📅",l:"Shifts"},{k:"history",i:"📋",l:"History"},{k:"salary",i:"💰",l:"Salary"},{k:"advances",i:"💳",l:"Advance"},{k:"profile",i:"👤",l:"Profile"}];
+  const empNav=[{k:"home",i:"🏠",l:"Home"},{k:"shifts",i:"📅",l:"Shifts"},{k:"history",i:"📋",l:"History"},{k:"salary",i:"💰",l:"Salary"},{k:"advances",i:"💳",l:"Advance"},{k:"kpi",i:"📊",l:"KPI"},{k:"tasks",i:"✔️",l:"Tasks"},{k:"profile",i:"👤",l:"Profile"}];
   const empPages={
     home: <EmpHome user={user} branch={myBranch} todayAtt={todayAtt} loading={loading} onScan={()=>setShowScanner(true)}/>,
     shifts: <EmpShifts user={user} notify={notify}/>,
     history: <EmpHistory user={user} notify={notify}/>,
     salary: <EmpSalary user={user} notify={notify}/>,
+      kpi: <KPIDailyEntry user={user} notify={notify}/>,
+      tasks: <TaskManager user={user} notify={notify} activeOrgId={user.org_id} isAdminView={false}/>,
     advances: <EmpAdvances user={user} notify={notify}/>,
     profile: <EmpProfile user={user} notify={notify}/>,
   };
 
   return(
     <>
-      {showScanner&&<QRScanner onScan={handleScan} onClose={()=>setShowScanner(false)} branches={branches} user={user}/>}
+      {showScanner&&<QRScanner onScan={handleScan} onClose={()=>setShowScanner(false)} branches={branches}/>}
       <div style={{flex:1,overflowY:"auto",paddingBottom:80}}>{empPages[page]||empPages.home}</div>
       <BottomNav items={empNav} page={page} setPage={setPage}/>
     </>
@@ -3479,102 +3526,619 @@ function WorkedTime({cin, cout}) {
   const m = mins - (h * 60);
   return <p style={{color:"#16a34a",fontSize:13,margin:"8px 0"}}>{"⏱ Worked: "+h+"h "+m+"m"}</p>;
 }
-function SalaryAdjustmentManager({notify, activeOrgId}) {
-  const now = new Date();
-  const [employees, setEmployees] = useState([]);
-  useEffect(()=>{ if(activeOrgId) GET("/api/employees",{org_id:activeOrgId}).then(e=>setEmployees(e||[])).catch(()=>{}); },[activeOrgId]);
-  const [selEmp, setSelEmp] = useState("");
-  const [selMonth, setSelMonth] = useState(`${now.getFullYear()}-${pad(now.getMonth()+1)}`);
-  const [adjustments, setAdjustments] = useState([]);
-  const [form, setForm] = useState({amount:"", type:"deduction", reason:""});
+
+// ── BRAND MANAGER ─────────────────────────────────────────────
+function BrandManager({notify, activeOrgId}) {
+  const [brands, setBrands] = useState([]);
+  const [show, setShow] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState({name:"", description:""});
   const f=(k,v)=>setForm(p=>({...p,[k]:v}));
 
-  const load = async () => {
-    if(!selEmp) return;
-    const [y,m] = selMonth.split("-").map(Number);
-    GET("/api/salary-adjustments", {employee_id:selEmp, year:y, month:m, org_id:activeOrgId})
-      .then(r=>setAdjustments(r||[])).catch(()=>{});
-  };
-  useEffect(()=>{load();},[selEmp, selMonth]);
+  const load=()=>GET("/api/brands",{org_id:activeOrgId}).then(b=>setBrands(b||[])).catch(()=>{});
+  useEffect(()=>{if(activeOrgId)load();},[activeOrgId]);
 
-  const save = async () => {
-    if(!selEmp){notify("Select employee","error");return;}
-    if(!form.amount||!form.reason){notify("Amount and reason required","error");return;}
-    const [y,m] = selMonth.split("-").map(Number);
-    try {
-      await POST("/api/salary-adjustments", {
-        employee_id:selEmp, amount:Number(form.amount),
-        type:form.type, reason:form.reason, year:y, month:m, org_id:activeOrgId
-      });
-      notify("Adjustment saved ✓");
-      setForm({amount:"", type:"deduction", reason:""});
-      load();
-    } catch(e){notify(e.message,"error");}
+  const save=async()=>{
+    if(!form.name){notify("Brand name required","error");return;}
+    try{
+      if(editing) await PATCH("/api/brands/"+editing,form);
+      else await POST("/api/brands",{...form,org_id:activeOrgId});
+      notify("Brand saved ✓"); setShow(false); setEditing(null);
+      setForm({name:"",description:""}); load();
+    }catch(e){notify(e.message,"error");}
   };
-
-  const del = async (id) => {
-    if(!window.confirm("Delete this adjustment?")) return;
-    try { await DEL(`/api/salary-adjustments/${id}`); notify("Deleted"); load(); }
-    catch(e){notify(e.message,"error");}
-  };
-
-  const netAdj = adjustments.reduce((s,a)=>s+(a.type==='bonus'?Number(a.amount):-Number(a.amount)),0);
 
   return(
-    <div style={{padding:20}}>
-      <h2 style={{color:C.g800,fontSize:22,fontWeight:800,marginBottom:16}}>Salary Adjustments</h2>
-      <p style={{color:C.gr500,fontSize:13,marginBottom:16}}>Add bonus, deduction or correction to an employee's monthly salary</p>
-
-      <select style={{...S.select,marginBottom:10}} value={selEmp} onChange={e=>setSelEmp(e.target.value)}>
-        <option value="">Select employee</option>
-        {(employees||[]).filter(e=>e.role==="employee"||e.role==="branch_admin").map(e=>(
-          <option key={e.id} value={e.id}>{e.name} — {e.branch_name}</option>
-        ))}
-      </select>
-
-      <input style={{...S.input,marginBottom:16}} type="month" value={selMonth} onChange={e=>setSelMonth(e.target.value)}/>
-
-      {/* Net summary */}
-      {adjustments.length>0&&(
-        <div style={{background:netAdj>=0?C.g50:"#fee2e2",borderRadius:14,padding:14,marginBottom:16,border:`1px solid ${netAdj>=0?C.g300:"#fca5a5"}`}}>
-          <p style={{color:netAdj>=0?C.g700:C.red,fontWeight:800,fontSize:15}}>
-            Net adjustment: {netAdj>=0?"+":""}{fmt(netAdj)}
-          </p>
-        </div>
-      )}
-
-      {/* Add form */}
-      <div style={{background:C.white,borderRadius:16,padding:16,marginBottom:16,boxShadow:`0 2px 8px ${C.g300}33`}}>
-        <p style={{color:C.g800,fontWeight:800,marginBottom:12}}>Add adjustment</p>
-        <select style={{...S.select,marginBottom:10}} value={form.type} onChange={e=>f("type",e.target.value)}>
-          <option value="deduction">Deduction (reduces salary)</option>
-          <option value="bonus">Bonus (adds to salary)</option>
-          <option value="correction">Correction (can be +/-)</option>
-        </select>
-        <input style={{...S.input,marginBottom:10}} type="number" placeholder="Amount (₹)" value={form.amount} onChange={e=>f("amount",e.target.value)}/>
-        <input style={{...S.input,marginBottom:10}} placeholder="Reason (required)" value={form.reason} onChange={e=>f("reason",e.target.value)}/>
-        <button style={S.btn} onClick={save}>Save adjustment</button>
+    <div style={{background:C.white,borderRadius:20,padding:20,marginTop:16,boxShadow:`0 2px 10px ${C.g300}33`}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+        <p style={{color:C.g800,fontWeight:800,fontSize:15}}>🏷 Brands</p>
+        <button onClick={()=>{setShow(!show);setEditing(null);setForm({name:"",description:""}); }}
+          style={{background:C.g100,border:"none",borderRadius:8,padding:"6px 12px",cursor:"pointer",color:C.g700,fontWeight:700,fontSize:12}}>
+          {show&&!editing?"Cancel":"+ Add Brand"}
+        </button>
       </div>
-
-      {/* Existing adjustments */}
-      {adjustments.map(a=>(
-        <div key={a.id} style={{background:C.white,borderRadius:14,padding:14,marginBottom:10,boxShadow:`0 2px 6px ${C.g300}22`,borderLeft:`4px solid ${a.type==='bonus'?C.g600:C.red}`}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
-            <div>
-              <p style={{color:a.type==='bonus'?C.g700:C.red,fontWeight:800,fontSize:15}}>
-                {a.type==='bonus'?"+":"-"}{fmt(a.amount)} — {a.type==='bonus'?"Bonus":a.type==='deduction'?"Deduction":"Correction"}
-              </p>
-              <p style={{color:C.gr500,fontSize:13}}>{a.reason}</p>
-              <p style={{color:C.gr400,fontSize:11}}>by {a.created_by_name} · {new Date(a.created_at).toLocaleDateString("en-IN",{day:"numeric",month:"short"})}</p>
-            </div>
-            <button onClick={()=>del(a.id)} style={{background:"#fff",border:`1px solid ${C.red}`,borderRadius:8,padding:"5px 10px",cursor:"pointer",color:C.red,fontSize:12}}>🗑</button>
+      {brands.map(b=>(
+        <div key={b.id} style={{background:C.g50,borderRadius:12,padding:"10px 14px",marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div>
+            <p style={{color:C.g800,fontWeight:700}}>{b.name}</p>
+            {b.description&&<p style={{color:C.gr500,fontSize:12}}>{b.description}</p>}
+          </div>
+          <div style={{display:"flex",gap:6}}>
+            <button onClick={()=>{setEditing(b.id);setForm({name:b.name,description:b.description||""});setShow(true);}}
+              style={{background:"#fff",border:`1px solid ${C.g300}`,borderRadius:8,padding:"4px 10px",cursor:"pointer",fontSize:12}}>✏️</button>
+            <button onClick={async()=>{try{await PATCH("/api/brands/"+b.id,{is_active:false});notify("Deleted");load();}catch(e){notify(e.message,"error");}}}
+              style={{background:"#fff",border:"1px solid #fca5a5",borderRadius:8,padding:"4px 10px",cursor:"pointer",color:C.red,fontSize:12}}>🗑</button>
           </div>
         </div>
       ))}
-      {adjustments.length===0&&selEmp&&<p style={{color:C.gr500,textAlign:"center",padding:20}}>No adjustments this month</p>}
+      {show&&(
+        <div style={{background:C.g50,borderRadius:14,padding:14,marginTop:8}}>
+          <label style={S.label}>{editing?"Edit":"New"} Brand</label>
+          <input style={S.input} placeholder="Brand name" value={form.name} onChange={e=>f("name",e.target.value)}/>
+          <input style={S.input} placeholder="Description (optional)" value={form.description} onChange={e=>f("description",e.target.value)}/>
+          <button style={S.btn} onClick={save}>Save brand</button>
+        </div>
+      )}
     </div>
   );
 }
+
+// ── KPI TEMPLATE MANAGER ──────────────────────────────────────
+function KPITemplateManager({notify, activeOrgId}) {
+  const [kpis, setKpis] = useState([]);
+  const [brands, setBrands] = useState([]);
+  const [show, setShow] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState({
+    name:"", category:"Sales", data_type:"number", frequency:"daily",
+    due_day:"", target_value:"", weightage:"", late_penalty:"10",
+    description:"", brand_id:""
+  });
+  const f=(k,v)=>setForm(p=>({...p,[k]:v}));
+
+  const CATEGORIES = ["Sales","Orders","Ratings","Customer","Operations","Finance","Waste","Growth","Tasks"];
+  const DAYS = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"];
+
+  const load=()=>{
+    Promise.all([
+      GET("/api/kpi-templates",{org_id:activeOrgId}),
+      GET("/api/brands",{org_id:activeOrgId}),
+    ]).then(([k,b])=>{setKpis(k||[]);setBrands(b||[]);}).catch(()=>{});
+  };
+  useEffect(()=>{if(activeOrgId)load();},[activeOrgId]);
+
+  const totalWeight = kpis.reduce((s,k)=>s+Number(k.weightage||0),0);
+
+  const save=async()=>{
+    if(!form.name||!form.target_value||!form.weightage){notify("Name, target and weightage required","error");return;}
+    if(Number(form.weightage)<=0){notify("Weightage must be greater than 0","error");return;}
+    try{
+      if(editing) await PATCH("/api/kpi-templates/"+editing,{...form,target_value:Number(form.target_value),weightage:Number(form.weightage),late_penalty:Number(form.late_penalty)});
+      else await POST("/api/kpi-templates",{...form,org_id:activeOrgId,target_value:Number(form.target_value),weightage:Number(form.weightage),late_penalty:Number(form.late_penalty)});
+      notify("KPI saved ✓"); setShow(false); setEditing(null);
+      setForm({name:"",category:"Sales",data_type:"number",frequency:"daily",due_day:"",target_value:"",weightage:"",late_penalty:"10",description:"",brand_id:""});
+      load();
+    }catch(e){notify(e.message,"error");}
+  };
+
+  const grouped = kpis.reduce((a,k)=>{(a[k.category]=a[k.category]||[]).push(k);return a;},{});
+
+  return(
+    <div style={{padding:20}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+        <div>
+          <h2 style={{color:C.g800,fontSize:22,fontWeight:800}}>KPI Templates</h2>
+          <p style={{color:totalWeight>=100?C.g600:C.amber,fontSize:13,fontWeight:700}}>
+            Total weightage: {totalWeight.toFixed(1)}% {totalWeight>=100?"✅":"(must reach 100%)"}
+          </p>
+        </div>
+        <button onClick={()=>{setShow(!show);setEditing(null);}}
+          style={{...S.btn,width:"auto",padding:"8px 14px",fontSize:13}}>+ Add KPI</button>
+      </div>
+
+      {/* KPI list grouped by category */}
+      {Object.entries(grouped).map(([cat, items])=>(
+        <div key={cat} style={{marginBottom:16}}>
+          <p style={{color:C.g700,fontWeight:800,fontSize:13,marginBottom:8,textTransform:"uppercase",letterSpacing:1}}>{cat}</p>
+          {items.map(k=>(
+            <div key={k.id} style={{background:C.white,borderRadius:14,padding:"12px 16px",marginBottom:8,boxShadow:`0 2px 6px ${C.g300}22`,borderLeft:`3px solid ${C.g500}`}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                <div style={{flex:1}}>
+                  <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:4}}>
+                    <p style={{color:C.g800,fontWeight:800}}>{k.name}</p>
+                    {k.brand_name&&<span style={{background:C.g100,color:C.g600,fontSize:10,padding:"2px 8px",borderRadius:20,fontWeight:700}}>{k.brand_name}</span>}
+                    <span style={{background:"#eff6ff",color:"#3b82f6",fontSize:10,padding:"2px 8px",borderRadius:20,fontWeight:700}}>{k.frequency}</span>
+                    {k.due_day&&<span style={{background:"#fef3c7",color:"#d97706",fontSize:10,padding:"2px 8px",borderRadius:20,fontWeight:700}}>{k.due_day}</span>}
+                  </div>
+                  <p style={{color:C.gr500,fontSize:12}}>Target: {k.target_value} · Weight: {k.weightage}% · Late penalty: -{k.late_penalty}%</p>
+                </div>
+                <div style={{display:"flex",gap:6}}>
+                  <button onClick={()=>{setEditing(k.id);setForm({name:k.name,category:k.category,data_type:k.data_type,frequency:k.frequency,due_day:k.due_day||"",target_value:String(k.target_value),weightage:String(k.weightage),late_penalty:String(k.late_penalty),description:k.description||"",brand_id:k.brand_id||""});setShow(true);}}
+                    style={{background:"#fff",border:`1px solid ${C.g300}`,borderRadius:8,padding:"4px 10px",cursor:"pointer",fontSize:12}}>✏️</button>
+                  <button onClick={async()=>{try{await DEL("/api/kpi-templates/"+k.id);notify("Deleted");load();}catch(e){notify(e.message,"error");}}}
+                    style={{background:"#fff",border:"1px solid #fca5a5",borderRadius:8,padding:"4px 10px",cursor:"pointer",color:C.red,fontSize:12}}>🗑</button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ))}
+
+      {kpis.length===0&&<Empty icon="📊" msg="No KPIs created yet"/>}
+
+      {/* Add/Edit form */}
+      {show&&(
+        <div style={{background:C.g50,borderRadius:16,padding:20,marginTop:16,border:`1px solid ${C.g200}`}}>
+          <p style={{color:C.g800,fontWeight:800,fontSize:15,marginBottom:14}}>{editing?"Edit KPI":"New KPI"}</p>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <div style={{gridColumn:"1/-1"}}>
+              <label style={S.label}>KPI Name</label>
+              <input style={S.input} placeholder="e.g. Google Rating, Daily Sales" value={form.name} onChange={e=>f("name",e.target.value)}/>
+            </div>
+            <div>
+              <label style={S.label}>Category</label>
+              <select style={S.select} value={form.category} onChange={e=>f("category",e.target.value)}>
+                {CATEGORIES.map(c=><option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={S.label}>Brand (optional)</label>
+              <select style={S.select} value={form.brand_id} onChange={e=>f("brand_id",e.target.value)}>
+                <option value="">All brands</option>
+                {brands.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={S.label}>Data type</label>
+              <select style={S.select} value={form.data_type} onChange={e=>f("data_type",e.target.value)}>
+                <option value="number">Number</option>
+                <option value="percentage">Percentage (%)</option>
+                <option value="currency">Currency (₹)</option>
+                <option value="rating">Rating (1-5)</option>
+              </select>
+            </div>
+            <div>
+              <label style={S.label}>Frequency</label>
+              <select style={S.select} value={form.frequency} onChange={e=>f("frequency",e.target.value)}>
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+              </select>
+            </div>
+            {form.frequency==="weekly"&&(
+              <div>
+                <label style={S.label}>Due day</label>
+                <select style={S.select} value={form.due_day} onChange={e=>f("due_day",e.target.value)}>
+                  <option value="">Select day</option>
+                  {DAYS.map(d=><option key={d} value={d}>{d.charAt(0).toUpperCase()+d.slice(1)}</option>)}
+                </select>
+              </div>
+            )}
+            {form.frequency==="monthly"&&(
+              <div>
+                <label style={S.label}>Due date (day of month)</label>
+                <input style={S.input} type="number" min="1" max="28" placeholder="e.g. 5" value={form.due_day} onChange={e=>f("due_day",e.target.value)}/>
+              </div>
+            )}
+            <div>
+              <label style={S.label}>Target value</label>
+              <input style={S.input} type="number" placeholder="e.g. 4.5 for rating, 50000 for sales" value={form.target_value} onChange={e=>f("target_value",e.target.value)}/>
+            </div>
+            <div>
+              <label style={S.label}>Weightage (%)</label>
+              <input style={S.input} type="number" min="0" max="100" placeholder={`Available: ${(100-totalWeight+(editing?Number(kpis.find(k=>k.id===editing)?.weightage||0):0)).toFixed(1)}%`} value={form.weightage} onChange={e=>f("weightage",e.target.value)}/>
+            </div>
+            <div>
+              <label style={S.label}>Late penalty (%)</label>
+              <input style={S.input} type="number" min="0" max="100" value={form.late_penalty} onChange={e=>f("late_penalty",e.target.value)}/>
+            </div>
+            <div style={{gridColumn:"1/-1"}}>
+              <label style={S.label}>Description (optional)</label>
+              <input style={S.input} placeholder="How to measure this KPI" value={form.description} onChange={e=>f("description",e.target.value)}/>
+            </div>
+          </div>
+          <div style={{display:"flex",gap:10,marginTop:4}}>
+            <button style={{...S.btn,flex:1}} onClick={save}>Save KPI</button>
+            <button onClick={()=>{setShow(false);setEditing(null);}} style={{...S.outline,flex:1}}>Cancel</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── KPI DAILY ENTRY (Branch Admin) ────────────────────────────
+function KPIDailyEntry({user, notify}) {
+  const [dueKPIs, setDueKPIs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [values, setValues] = useState({});
+  const [notes, setNotes] = useState({});
+  const [submitting, setSubmitting] = useState({});
+  const [selDate, setSelDate] = useState(today());
+
+  const load=async()=>{
+    setLoading(true);
+    try{
+      const data = await GET("/api/kpi-entries/due-today");
+      setDueKPIs(data||[]);
+    }catch(e){notify(e.message,"error");}
+    finally{setLoading(false);}
+  };
+  useEffect(()=>{load();},[]);
+
+  const submit=async(kpi)=>{
+    const val = values[kpi.id];
+    if(!val&&val!==0){notify("Enter a value","error");return;}
+    setSubmitting(s=>({...s,[kpi.id]:true}));
+    try{
+      await POST("/api/kpi-entries",{kpi_id:kpi.id,value:Number(val),notes:notes[kpi.id]||"",due_date:selDate});
+      notify(`${kpi.name} submitted ✓`);
+      load();
+    }catch(e){notify(e.message,"error");}
+    finally{setSubmitting(s=>({...s,[kpi.id]:false}));}
+  };
+
+  const TYPE_SUFFIX = {number:"",percentage:"%",currency:"₹",rating:"/5"};
+  const pending = dueKPIs.filter(k=>!k.entry_id);
+  const done = dueKPIs.filter(k=>k.entry_id);
+  const isLate = selDate < today();
+
+  if(loading) return <Spinner/>;
+
+  return(
+    <div style={{padding:20}}>
+      <h2 style={{color:C.g800,fontSize:22,fontWeight:800,marginBottom:4}}>KPI Entry</h2>
+      <p style={{color:C.gr500,fontSize:13,marginBottom:12}}>Record today's performance metrics</p>
+
+      <input style={{...S.input,marginBottom:16}} type="date" value={selDate} onChange={e=>setSelDate(e.target.value)} max={today()}/>
+
+      {isLate&&(
+        <div style={{background:"#fffbeb",border:"1px solid #fcd34d",borderRadius:12,padding:12,marginBottom:16}}>
+          <p style={{color:"#92400e",fontWeight:700,fontSize:13}}>⚠ Late submission — penalty will apply to score</p>
+        </div>
+      )}
+
+      {pending.length===0&&done.length===0&&(
+        <div style={{textAlign:"center",padding:"40px 20px"}}>
+          <p style={{fontSize:40,marginBottom:12}}>📊</p>
+          <p style={{color:C.g600,fontWeight:700}}>No KPIs due today</p>
+          <p style={{color:C.gr500,fontSize:13}}>Check back on your next scheduled entry day</p>
+        </div>
+      )}
+
+      {pending.length>0&&(
+        <>
+          <p style={{color:C.g700,fontWeight:800,fontSize:14,marginBottom:10}}>Pending ({pending.length})</p>
+          {pending.map(kpi=>(
+            <div key={kpi.id} style={{background:C.white,borderRadius:16,padding:16,marginBottom:12,boxShadow:`0 2px 8px ${C.g300}33`,borderLeft:`4px solid ${C.amber}`}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+                <div>
+                  <p style={{color:C.g800,fontWeight:800}}>{kpi.name}</p>
+                  <p style={{color:C.gr500,fontSize:12}}>{kpi.category} {kpi.brand_name?`· ${kpi.brand_name}`:""} · Target: {kpi.target_value}{TYPE_SUFFIX[kpi.data_type]}</p>
+                </div>
+                <span style={{background:"#fef3c7",color:C.amber,fontSize:11,padding:"2px 8px",borderRadius:20,fontWeight:700}}>Pending</span>
+              </div>
+              {kpi.description&&<p style={{color:C.gr500,fontSize:12,marginBottom:8}}>ℹ {kpi.description}</p>}
+              <div style={{display:"flex",gap:8,marginBottom:8}}>
+                <input style={{...S.input,flex:2,marginBottom:0}}
+                  type="number" placeholder={`Enter value (target: ${kpi.target_value})`}
+                  value={values[kpi.id]||""} onChange={e=>setValues(v=>({...v,[kpi.id]:e.target.value}))}/>
+                <span style={{alignSelf:"center",color:C.gr500,fontWeight:700}}>{TYPE_SUFFIX[kpi.data_type]||""}</span>
+              </div>
+              <input style={{...S.input,marginBottom:8}} placeholder="Notes (optional)" value={notes[kpi.id]||""} onChange={e=>setNotes(n=>({...n,[kpi.id]:e.target.value}))}/>
+              <button style={{...S.btn,padding:"10px"}} onClick={()=>submit(kpi)} disabled={submitting[kpi.id]}>
+                {submitting[kpi.id]?"Submitting...":"Submit"}
+              </button>
+            </div>
+          ))}
+        </>
+      )}
+
+      {done.length>0&&(
+        <>
+          <p style={{color:C.g700,fontWeight:800,fontSize:14,marginBottom:10,marginTop:16}}>Submitted ({done.length})</p>
+          {done.map(kpi=>(
+            <div key={kpi.id} style={{background:C.white,borderRadius:16,padding:16,marginBottom:10,boxShadow:`0 2px 6px ${C.g300}22`,borderLeft:`4px solid ${kpi.status==='approved'?C.g600:kpi.status==='rejected'?C.red:C.gr300}`}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div>
+                  <p style={{color:C.g800,fontWeight:800}}>{kpi.name}</p>
+                  <p style={{color:C.gr500,fontSize:12}}>Value: {kpi.value}{TYPE_SUFFIX[kpi.data_type]} · Score: {kpi.score?.toFixed(1)}%</p>
+                  {kpi.is_late&&<span style={{background:"#fef3c7",color:C.amber,fontSize:10,padding:"2px 8px",borderRadius:20,fontWeight:700}}>Late submission</span>}
+                </div>
+                <span style={{background:kpi.status==='approved'?C.g50:kpi.status==='rejected'?"#fee2e2":"#f3f4f6",color:kpi.status==='approved'?C.g600:kpi.status==='rejected'?C.red:C.gr500,fontSize:12,padding:"4px 10px",borderRadius:20,fontWeight:700,textTransform:"capitalize"}}>{kpi.status}</span>
+              </div>
+            </div>
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── KPI REVIEW (Org Admin) ────────────────────────────────────
+function KPIReview({notify, activeOrgId}) {
+  const [entries, setEntries] = useState([]);
+  const [branches, setBranches] = useState([]);
+  const [selBranch, setSelBranch] = useState("all");
+  const [selWeek, setSelWeek] = useState(()=>{
+    const d=new Date(); d.setDate(d.getDate()-d.getDay()+1);
+    return d.toISOString().split('T')[0];
+  });
+  const [loading, setLoading] = useState(true);
+
+  const load=async()=>{
+    setLoading(true);
+    const weekEnd = new Date(selWeek); weekEnd.setDate(weekEnd.getDate()+6);
+    try{
+      const [e,b]=await Promise.all([
+        GET("/api/kpi-entries",{org_id:activeOrgId,from:selWeek,to:weekEnd.toISOString().split('T')[0],status:"submitted"}),
+        GET("/api/branches",{org_id:activeOrgId}),
+      ]);
+      setEntries(e||[]); setBranches(b||[]);
+    }catch(err){notify(err.message,"error");}
+    finally{setLoading(false);}
+  };
+  useEffect(()=>{if(activeOrgId)load();},[activeOrgId,selWeek]);
+
+  const approve=async(id)=>{
+    try{await PATCH("/api/kpi-entries/"+id,{status:"approved"});notify("Approved ✓");load();}
+    catch(e){notify(e.message,"error");}
+  };
+  const reject=async(id,reason)=>{
+    const r=window.prompt("Reason for rejection:");
+    if(!r) return;
+    try{await PATCH("/api/kpi-entries/"+id,{status:"rejected",rejection_reason:r});notify("Rejected");load();}
+    catch(e){notify(e.message,"error");}
+  };
+
+  const filtered = selBranch==="all" ? entries : entries.filter(e=>e.branch_id===selBranch);
+  const pendingCount = filtered.filter(e=>e.status==="submitted").length;
+
+  if(loading) return <Spinner/>;
+
+  return(
+    <div style={{padding:20}}>
+      <h2 style={{color:C.g800,fontSize:22,fontWeight:800,marginBottom:16}}>KPI Review</h2>
+      <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
+        <input style={{...S.input,flex:1,marginBottom:0}} type="date" value={selWeek} onChange={e=>setSelWeek(e.target.value)}/>
+        <select style={{...S.select,flex:1}} value={selBranch} onChange={e=>setSelBranch(e.target.value)}>
+          <option value="all">All branches</option>
+          {branches.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}
+        </select>
+      </div>
+      {pendingCount>0&&(
+        <div style={{background:"#fef3c7",borderRadius:12,padding:12,marginBottom:16}}>
+          <p style={{color:"#92400e",fontWeight:700}}>{pendingCount} entries pending approval</p>
+        </div>
+      )}
+      {filtered.map(e=>(
+        <div key={e.id} style={{background:C.white,borderRadius:16,padding:16,marginBottom:12,boxShadow:`0 2px 8px ${C.g300}33`,borderLeft:`4px solid ${e.is_late?C.amber:C.g400}`}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+            <div>
+              <p style={{color:C.g800,fontWeight:800}}>{e.kpi_name}</p>
+              <p style={{color:C.gr500,fontSize:12}}>{e.branch_name} · {e.submitted_by_name} · {fmtD(e.due_date)}</p>
+              <p style={{color:C.g700,fontSize:14,fontWeight:700,marginTop:4}}>Value: {e.value} · Score: {Number(e.score||0).toFixed(1)}%</p>
+              {e.notes&&<p style={{color:C.gr500,fontSize:12}}>"{e.notes}"</p>}
+              {e.is_late&&<span style={{background:"#fef3c7",color:C.amber,fontSize:10,padding:"2px 8px",borderRadius:20,fontWeight:700}}>Late submission</span>}
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              <button style={{...S.btn,padding:"6px 12px",fontSize:12,background:C.g600}} onClick={()=>approve(e.id)}>✓ Approve</button>
+              <button style={{...S.btn,padding:"6px 12px",fontSize:12,background:C.red}} onClick={()=>reject(e.id)}>✕ Reject</button>
+            </div>
+          </div>
+        </div>
+      ))}
+      {filtered.length===0&&<Empty icon="📊" msg="No entries to review this week"/>}
+    </div>
+  );
+}
+
+// ── KPI SCORES DASHBOARD ──────────────────────────────────────
+function KPIScores({notify, activeOrgId, user}) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const now = new Date();
+  const [selMonth, setSelMonth] = useState(`${now.getFullYear()}-${pad(now.getMonth()+1)}`);
+
+  const load=async()=>{
+    setLoading(true);
+    const [y,m]=selMonth.split("-").map(Number);
+    try{
+      const d=await GET("/api/kpi-scores",{org_id:activeOrgId,year:y,month:m});
+      setData(d);
+    }catch(e){notify(e.message,"error");}
+    finally{setLoading(false);}
+  };
+  useEffect(()=>{if(activeOrgId)load();},[activeOrgId,selMonth]);
+
+  const scoreColor=(s)=>s>=76?"#16a34a":s>=51?"#d97706":"#dc2626";
+  const scoreBg=(s)=>s>=76?"#dcfce7":s>=51?"#fef3c7":"#fee2e2";
+
+  if(loading) return <Spinner/>;
+
+  return(
+    <div style={{padding:20}}>
+      <h2 style={{color:C.g800,fontSize:22,fontWeight:800,marginBottom:16}}>KPI Scores</h2>
+      <input style={{...S.input,marginBottom:16}} type="month" value={selMonth} onChange={e=>setSelMonth(e.target.value)}/>
+
+      {data?.branches?.map(branch=>(
+        <div key={branch.branch_id} style={{background:C.white,borderRadius:20,padding:20,marginBottom:16,boxShadow:`0 2px 12px ${C.g300}44`}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+            <p style={{color:C.g800,fontWeight:800,fontSize:16}}>{branch.branch_name}</p>
+            <div style={{background:scoreBg(branch.weighted_score),borderRadius:14,padding:"8px 16px",textAlign:"center"}}>
+              <p style={{color:scoreColor(branch.weighted_score),fontWeight:900,fontSize:22}}>{branch.weighted_score.toFixed(1)}%</p>
+              <p style={{color:scoreColor(branch.weighted_score),fontSize:11,fontWeight:700}}>
+                {branch.weighted_score>=76?"🟢 Good":branch.weighted_score>=51?"🟡 Average":"🔴 Poor"}
+              </p>
+            </div>
+          </div>
+          {/* Score bar */}
+          <div style={{background:C.g100,borderRadius:8,height:8,marginBottom:14}}>
+            <div style={{background:scoreColor(branch.weighted_score),height:8,borderRadius:8,width:`${Math.min(100,branch.weighted_score)}%`,transition:"width .5s"}}/>
+          </div>
+          {/* KPI breakdown */}
+          {branch.kpis.map(k=>(
+            <div key={k.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:`1px solid ${C.g50}`}}>
+              <div>
+                <p style={{color:C.gr700,fontSize:13}}>{k.name}</p>
+                <p style={{color:C.gr400,fontSize:11}}>{k.category} · {k.weightage}% weight · {k.entries_count} entries</p>
+              </div>
+              <div style={{textAlign:"right"}}>
+                <p style={{color:scoreColor(k.avg_score),fontWeight:700,fontSize:14}}>{Number(k.avg_score).toFixed(1)}%</p>
+                {k.late_count>0&&<p style={{color:C.amber,fontSize:11}}>{k.late_count} late</p>}
+              </div>
+            </div>
+          ))}
+        </div>
+      ))}
+      {(!data?.branches||data.branches.length===0)&&<Empty icon="📊" msg="No KPI data this month"/>}
+    </div>
+  );
+}
+
+// ── TASK MANAGER ──────────────────────────────────────────────
+function TaskManager({user, notify, activeOrgId, isAdminView}) {
+  const [tasks, setTasks] = useState([]);
+  const [employees, setEmployees] = useState([]);
+  const [branches, setBranches] = useState([]);
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({title:"",description:"",assigned_to:"",branch_id:"",due_date:"",priority:"medium"});
+  const f=(k,v)=>setForm(p=>({...p,[k]:v}));
+  const [filter, setFilter] = useState("all");
+
+  const load=async()=>{
+    try{
+      const params = isAdminView
+        ? {org_id:activeOrgId}
+        : {assigned_to:user.id,org_id:activeOrgId||user.org_id};
+      const [t,e,b]=await Promise.all([
+        GET("/api/tasks",params),
+        isAdminView?GET("/api/employees",{org_id:activeOrgId}):Promise.resolve([]),
+        isAdminView?GET("/api/branches",{org_id:activeOrgId}):Promise.resolve([]),
+      ]);
+      setTasks(t||[]); setEmployees((e||[]).filter(x=>x.role==="branch_admin"||x.role==="employee")); setBranches(b||[]);
+    }catch(e){notify(e.message,"error");}
+  };
+  useEffect(()=>{if(activeOrgId||user.org_id)load();},[activeOrgId]);
+
+  const save=async()=>{
+    if(!form.title){notify("Task title required","error");return;}
+    try{
+      await POST("/api/tasks",{...form,org_id:activeOrgId||user.org_id});
+      notify("Task created ✓"); setShowForm(false);
+      setForm({title:"",description:"",assigned_to:"",branch_id:"",due_date:"",priority:"medium"});
+      load();
+    }catch(e){notify(e.message,"error");}
+  };
+
+  const updateStatus=async(id,status)=>{
+    try{await PATCH("/api/tasks/"+id,{status});notify("Updated ✓");load();}
+    catch(e){notify(e.message,"error");}
+  };
+
+  const PRIORITY_STYLE={high:{color:"#dc2626",bg:"#fee2e2",label:"High"},medium:{color:"#d97706",bg:"#fef3c7",label:"Medium"},low:{color:"#16a34a",bg:"#dcfce7",label:"Low"}};
+  const STATUS_STYLE={pending:{color:"#6b7280",label:"Pending"},in_progress:{color:"#3b82f6",label:"In Progress"},completed:{color:"#16a34a",label:"Completed"},overdue:{color:"#dc2626",label:"Overdue"}};
+
+  const filtered = filter==="all" ? tasks : tasks.filter(t=>t.status===filter);
+
+  return(
+    <div style={{padding:20}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+        <h2 style={{color:C.g800,fontSize:22,fontWeight:800}}>Tasks</h2>
+        {isAdminView&&<button style={{...S.btn,width:"auto",padding:"8px 14px",fontSize:13}} onClick={()=>setShowForm(!showForm)}>+ Assign Task</button>}
+      </div>
+
+      {/* Status filter */}
+      <div style={{display:"flex",gap:6,marginBottom:16,overflowX:"auto"}}>
+        {["all","pending","in_progress","completed","overdue"].map(s=>(
+          <button key={s} onClick={()=>setFilter(s)}
+            style={{background:filter===s?C.g600:C.g100,border:"none",borderRadius:20,padding:"6px 12px",cursor:"pointer",color:filter===s?C.white:C.gr500,fontWeight:700,fontSize:12,whiteSpace:"nowrap",textTransform:"capitalize"}}>
+            {s==="all"?"All":s.replace("_"," ")} ({s==="all"?tasks.length:tasks.filter(t=>t.status===s).length})
+          </button>
+        ))}
+      </div>
+
+      {/* Add task form */}
+      {showForm&&isAdminView&&(
+        <div style={{background:C.g50,borderRadius:16,padding:16,marginBottom:16,border:`1px solid ${C.g200}`}}>
+          <label style={S.label}>Task title</label>
+          <input style={S.input} placeholder="Task title" value={form.title} onChange={e=>f("title",e.target.value)}/>
+          <label style={S.label}>Description</label>
+          <input style={S.input} placeholder="Details" value={form.description} onChange={e=>f("description",e.target.value)}/>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <div>
+              <label style={S.label}>Assign to</label>
+              <select style={S.select} value={form.assigned_to} onChange={e=>f("assigned_to",e.target.value)}>
+                <option value="">Select person</option>
+                {employees.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={S.label}>Branch</label>
+              <select style={S.select} value={form.branch_id} onChange={e=>f("branch_id",e.target.value)}>
+                <option value="">Select branch</option>
+                {branches.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={S.label}>Due date</label>
+              <input style={S.input} type="date" value={form.due_date} onChange={e=>f("due_date",e.target.value)}/>
+            </div>
+            <div>
+              <label style={S.label}>Priority</label>
+              <select style={S.select} value={form.priority} onChange={e=>f("priority",e.target.value)}>
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+              </select>
+            </div>
+          </div>
+          <button style={S.btn} onClick={save}>Create task</button>
+        </div>
+      )}
+
+      {filtered.map(task=>{
+        const ps=PRIORITY_STYLE[task.priority]||PRIORITY_STYLE.medium;
+        const ss=STATUS_STYLE[task.status]||STATUS_STYLE.pending;
+        const isOverdue=task.status!=="completed"&&task.due_date&&task.due_date<today();
+        return(
+          <div key={task.id} style={{background:C.white,borderRadius:16,padding:16,marginBottom:12,boxShadow:`0 2px 8px ${C.g300}33`,borderLeft:`4px solid ${isOverdue?C.red:ps.color}`}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+              <div style={{flex:1}}>
+                <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginBottom:4}}>
+                  <p style={{color:C.g800,fontWeight:800}}>{task.title}</p>
+                  <span style={{background:ps.bg,color:ps.color,fontSize:10,padding:"2px 8px",borderRadius:20,fontWeight:700}}>{ps.label}</span>
+                  {isOverdue&&<span style={{background:"#fee2e2",color:C.red,fontSize:10,padding:"2px 8px",borderRadius:20,fontWeight:700}}>Overdue</span>}
+                </div>
+                {task.description&&<p style={{color:C.gr500,fontSize:13}}>{task.description}</p>}
+                <p style={{color:C.gr500,fontSize:12,marginTop:4}}>
+                  {task.assigned_to_name&&`👤 ${task.assigned_to_name}`}
+                  {task.branch_name&&` · 📍 ${task.branch_name}`}
+                  {task.due_date&&` · 📅 ${fmtD(task.due_date)}`}
+                </p>
+              </div>
+              <span style={{color:ss.color,fontSize:12,fontWeight:700,textTransform:"capitalize",whiteSpace:"nowrap"}}>{ss.label}</span>
+            </div>
+            {/* Action buttons */}
+            {task.status!=="completed"&&(
+              <div style={{display:"flex",gap:6,marginTop:8}}>
+                {task.status==="pending"&&<button style={{...S.outline,flex:1,padding:"8px",fontSize:12}} onClick={()=>updateStatus(task.id,"in_progress")}>▶ Start</button>}
+                {(task.status==="pending"||task.status==="in_progress")&&<button style={{...S.btn,flex:1,padding:"8px",fontSize:12,background:C.g600}} onClick={()=>updateStatus(task.id,"completed")}>✓ Complete</button>}
+                {isAdminView&&<button style={{...S.outline,padding:"8px 12px",fontSize:12,borderColor:C.red,color:C.red}} onClick={async()=>{try{await DEL("/api/tasks/"+task.id);notify("Deleted");load();}catch(e){notify(e.message,"error");}}}>🗑</button>}
+              </div>
+            )}
+            {task.status==="completed"&&task.completed_at&&(
+              <p style={{color:C.g600,fontSize:12,marginTop:6}}>✅ Completed {new Date(task.completed_at).toLocaleDateString("en-IN",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}</p>
+            )}
+          </div>
+        );
+      })}
+      {filtered.length===0&&<Empty icon="✅" msg="No tasks in this category"/>}
+    </div>
+  );
+}
+
+
 // ── STYLES ─────────────────────────────────────────────────────────────────
 const S = {
   label: {color:C.g800,fontSize:13,fontWeight:600,marginBottom:6,display:"block"},

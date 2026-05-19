@@ -857,30 +857,8 @@ app.post('/api/attendance/admin-mark', auth(['super_admin', 'org_admin', 'branch
       'SELECT is_late, late_mins FROM attendance_records WHERE employee_id=$1 AND date::text=$2 LIMIT 1',
       [employee_id, date]
     );
-    // Recalculate late based on new check-in time
-const { rows: shiftInfo } = await db(`
-  SELECT COALESCE(
-    (SELECT st.start_time FROM shift_schedules ss 
-     JOIN shift_templates st ON st.id=ss.shift_id
-     WHERE ss.employee_id=$1 AND ss.date::text=$2 
-     ORDER BY ss.is_override DESC LIMIT 1),
-    (SELECT st.start_time FROM users u 
-     JOIN shift_templates st ON st.id=u.default_shift_id WHERE u.id=$1),
-    (SELECT st.start_time FROM org_settings os 
-     JOIN shift_templates st ON st.id=os.default_shift_id
-     WHERE os.org_id=(SELECT org_id FROM users WHERE id=$1))
-  ) AS start_time
-`, [employee_id, date]);
-const { rows: graceInfo } = await db(
-  'SELECT grace_period_mins FROM org_settings WHERE org_id=(SELECT org_id FROM users WHERE id=$1)',
-  [employee_id]
-);
-const grace2 = graceInfo[0]?.grace_period_mins || 15;
-const shiftStartMins2 = shiftInfo[0]?.start_time
-  ? toMins(String(shiftInfo[0].start_time).slice(0,5)) : null;
-const newCinMins = toMins(check_in_time);
-const keepIsLate = shiftStartMins2 !== null ? (newCinMins - shiftStartMins2 > grace2) : false;
-const keepLateMins = shiftStartMins2 !== null ? Math.max(0, newCinMins - shiftStartMins2) : 0;
+    const keepIsLate = existing[0]?.is_late || false;
+    const keepLateMins = existing[0]?.late_mins || 0;
 
     await db(`
       INSERT INTO attendance_records
@@ -1077,7 +1055,6 @@ app.get('/api/my-salary', auth(['employee','branch_admin']), async (req, res) =>
     const presentDays = att.filter(a => a.check_in_time).length;
     const lateDays = att.filter(a => a.is_late && a.approval_status !== 'rejected').length;
     const clUsed = lvs.filter(l => l.type === 'casual').length;
-    const halfDays = lvs.filter(l => l.type === 'half_day').length;
     const slUsed = lvs.filter(l => l.type === 'sick').length;
     const unauthLeaves = lvs.filter(l => l.type === 'unauthorized').length;
     const noShows = lvs.filter(l => l.type === 'noshow').length;
@@ -1104,19 +1081,13 @@ app.get('/api/my-salary', auth(['employee','branch_admin']), async (req, res) =>
       (excessLates > 0 ? excessLates * (s.excess_late_deduction || 100) : 0) +
       (lateDays >= chronicThreshold ? excessLates * (s.chronic_late_deduction || 200) : 0);
 
-    const halfDayDeduction = halfDays * (dailyRate / 2);
-    const leaveDeductions = (unauthLeaves * dailyRate) + (clExcess * dailyRate) + (slExcess * dailyRate) + halfDayDeduction;
+    const leaveDeductions = (unauthLeaves * dailyRate) + (clExcess * dailyRate) + (slExcess * dailyRate);
     const noShowDeductions = noShows * dailyRate;
     const earlyDeductions = earlyCheckouts * (s.early_checkout_flat_penalty || 50) +
       Math.round((earlyMinsTotal / 60) * hourlyRate);
     const advanceDeduction = Number(advRows[0]?.monthly_deduction || 0);
-    const { rows: adjRows } = await db(`
-      SELECT COALESCE(SUM(CASE WHEN type='bonus' THEN amount ELSE -amount END),0) AS net_adjustment
-      FROM salary_adjustments WHERE employee_id=$1 AND year=$2 AND month=$3
-      `, [req.user.id, y, m]);
-    const netAdjustment = Number(adjRows[0]?.net_adjustment || 0);
     const totalDeductions = lateDeductions + leaveDeductions + noShowDeductions + earlyDeductions + advanceDeduction;
-    const netEarned = Math.max(0, earnedGross - totalDeductions) + netAdjustment;
+
     res.json({
       salary, workingDays: divisor, presentDays, lateDays, clUsed, slUsed,
       clAllowed, slAllowed, clExcess, slExcess,
@@ -1124,7 +1095,7 @@ app.get('/api/my-salary', auth(['employee','branch_admin']), async (req, res) =>
       dailyRate, earnedGross, lateDeductions,
       leaveDeductions, noShowDeductions, earlyDeductions,
       earlyCheckouts, advanceDeduction,
-      totalDeductions, netEarned, netAdjustment,
+      totalDeductions, netEarned: Math.max(0, earnedGross - totalDeductions),
       category: cat?.name || null,
     });
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -1502,49 +1473,320 @@ app.delete('/api/job-categories/:id', auth(['super_admin','org_admin']), async (
 });
 
 // ============================================================
-// ============================================================
-// SALARY ADJUSTMENTS
+// KPI MODULE
 // ============================================================
 
-app.get('/api/salary-adjustments', auth(['super_admin','org_admin','branch_admin']), async (req, res) => {
+// ── BRANDS ────────────────────────────────────────────────────
+app.get('/api/brands', auth(), async (req, res) => {
   try {
-    const oid = orgId(req);
-    const { employee_id, year, month } = req.query;
-    const { rows } = await db(`
-      SELECT sa.*, u.name AS employee_name, cb.name AS created_by_name
-      FROM salary_adjustments sa
-      JOIN users u ON u.id = sa.employee_id
-      LEFT JOIN users cb ON cb.id = sa.created_by
-      WHERE sa.org_id=$1
-        ${employee_id ? 'AND sa.employee_id=$2' : ''}
-        ${year ? `AND sa.year=${parseInt(year)}` : ''}
-        ${month ? `AND sa.month=${parseInt(month)}` : ''}
-      ORDER BY sa.created_at DESC LIMIT 100
-    `, employee_id ? [oid, employee_id] : [oid]);
+    const oid = req.query.org_id || orgId(req);
+    const { rows } = await db(
+      'SELECT * FROM brands WHERE org_id=$1 AND is_active=true ORDER BY name', [oid]);
     res.json(rows);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-app.post('/api/salary-adjustments', auth(['super_admin','org_admin']), async (req, res) => {
+app.post('/api/brands', auth(['super_admin','org_admin']), async (req, res) => {
   try {
     const oid = orgId(req);
-    const { employee_id, amount, type, reason, year, month } = req.body;
-    if(!reason?.trim()) return res.status(400).json({ error: 'Reason is required' });
-    const { rows } = await db(`
-      INSERT INTO salary_adjustments (org_id,employee_id,amount,type,reason,year,month,created_by)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *
-    `, [oid, employee_id, amount, type||'deduction', reason, year, month, req.user.id]);
+    const { name, description } = req.body;
+    const { rows } = await db(
+      'INSERT INTO brands (org_id,name,description) VALUES ($1,$2,$3) RETURNING *',
+      [oid, name, description||null]);
     res.json(rows[0]);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-app.delete('/api/salary-adjustments/:id', auth(['super_admin','org_admin']), async (req, res) => {
+app.patch('/api/brands/:id', auth(['super_admin','org_admin']), async (req, res) => {
   try {
-    await db('DELETE FROM salary_adjustments WHERE id=$1', [req.params.id]);
+    const { name, description, is_active } = req.body;
+    await db('UPDATE brands SET name=COALESCE($1,name), description=COALESCE($2,description), is_active=COALESCE($3,is_active) WHERE id=$4',
+      [name, description, is_active, req.params.id]);
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+app.delete('/api/brands/:id', auth(['super_admin','org_admin']), async (req, res) => {
+  try {
+    await db('UPDATE brands SET is_active=false WHERE id=$1', [req.params.id]);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── KPI TEMPLATES ─────────────────────────────────────────────
+app.get('/api/kpi-templates', auth(), async (req, res) => {
+  try {
+    const oid = req.query.org_id || orgId(req);
+    const { rows } = await db(`
+      SELECT kt.*, b.name AS brand_name,
+             COALESCE(SUM(kt2.weightage),0) AS total_weightage
+      FROM kpi_templates kt
+      LEFT JOIN brands b ON b.id = kt.brand_id
+      LEFT JOIN kpi_templates kt2 ON kt2.org_id = kt.org_id AND kt2.is_active = true
+      WHERE kt.org_id=$1 AND kt.is_active=true
+      GROUP BY kt.id, b.name
+      ORDER BY kt.category, kt.name
+    `, [oid]);
+    res.json(rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/kpi-templates', auth(['super_admin','org_admin']), async (req, res) => {
+  try {
+    const oid = orgId(req);
+    const { name, category, data_type, frequency, due_day, target_value, weightage, late_penalty, description, brand_id } = req.body;
+    // Check total weightage won't exceed 100
+    const { rows: wRows } = await db(
+      'SELECT COALESCE(SUM(weightage),0) AS total FROM kpi_templates WHERE org_id=$1 AND is_active=true', [oid]);
+    const currentTotal = Number(wRows[0]?.total || 0);
+    if(currentTotal + Number(weightage) > 100) {
+      return res.status(400).json({ error: `Total weightage would exceed 100%. Currently used: ${currentTotal}%` });
+    }
+    const { rows } = await db(`
+      INSERT INTO kpi_templates (org_id,brand_id,name,category,data_type,frequency,due_day,target_value,weightage,late_penalty,description)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *
+    `, [oid, brand_id||null, name, category, data_type||'number', frequency||'daily',
+        due_day||null, target_value, weightage||0, late_penalty||10, description||null]);
+    res.json(rows[0]);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/api/kpi-templates/:id', auth(['super_admin','org_admin']), async (req, res) => {
+  try {
+    const { rows: cur } = await db('SELECT * FROM kpi_templates WHERE id=$1', [req.params.id]);
+    if(!cur[0]) return res.status(404).json({ error: 'KPI not found' });
+    const c = cur[0];
+    const { name, category, data_type, frequency, due_day, target_value, weightage, late_penalty, description, brand_id, is_active } = req.body;
+    await db(`UPDATE kpi_templates SET name=COALESCE($1,name), category=COALESCE($2,category),
+      data_type=COALESCE($3,data_type), frequency=COALESCE($4,frequency),
+      due_day=COALESCE($5,due_day), target_value=COALESCE($6,target_value),
+      weightage=COALESCE($7,weightage), late_penalty=COALESCE($8,late_penalty),
+      description=COALESCE($9,description), brand_id=COALESCE($10,brand_id),
+      is_active=COALESCE($11,is_active) WHERE id=$12`,
+      [name,category,data_type,frequency,due_day,target_value,weightage,late_penalty,description,brand_id,is_active,req.params.id]);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/kpi-templates/:id', auth(['super_admin','org_admin']), async (req, res) => {
+  try {
+    await db('UPDATE kpi_templates SET is_active=false WHERE id=$1', [req.params.id]);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── KPI ENTRIES ───────────────────────────────────────────────
+
+// Get today's due KPIs for branch admin
+app.get('/api/kpi-entries/due-today', auth(['employee','branch_admin']), async (req, res) => {
+  try {
+    const oid = orgId(req);
+    const today = nowIST().date;
+    const dayName = new Date(today+'T12:00:00').toLocaleDateString('en-US',{weekday:'long'}).toLowerCase();
+    const dayOfMonth = new Date(today+'T12:00:00').getDate().toString();
+    const branchId = req.user.branch_id;
+
+    // Get all active KPIs for this org
+    const { rows: kpis } = await db(`
+      SELECT kt.*, b.name AS brand_name,
+             ke.id AS entry_id, ke.value, ke.status, ke.is_late, ke.score, ke.notes
+      FROM kpi_templates kt
+      LEFT JOIN brands b ON b.id = kt.brand_id
+      LEFT JOIN kpi_entries ke ON ke.kpi_id=kt.id AND ke.branch_id=$1 AND ke.due_date::text=$2
+      WHERE kt.org_id=$3 AND kt.is_active=true
+        AND (
+          kt.frequency='daily'
+          OR (kt.frequency='weekly' AND LOWER(kt.due_day)=$4)
+          OR (kt.frequency='monthly' AND kt.due_day=$5)
+        )
+      ORDER BY kt.category, kt.name
+    `, [branchId, today, oid, dayName, dayOfMonth]);
+    res.json(kpis);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Get KPI entries for a branch (admin view)
+app.get('/api/kpi-entries', auth(), async (req, res) => {
+  try {
+    const oid = req.query.org_id || orgId(req);
+    const { branch_id, from, to, status } = req.query;
+    let sql = `
+      SELECT ke.*, kt.name AS kpi_name, kt.category, kt.target_value, kt.weightage,
+             kt.data_type, kt.frequency, b.name AS brand_name,
+             u.name AS submitted_by_name, br.name AS branch_name,
+             ap.name AS approved_by_name
+      FROM kpi_entries ke
+      JOIN kpi_templates kt ON kt.id = ke.kpi_id
+      LEFT JOIN brands b ON b.id = ke.brand_id
+      JOIN users u ON u.id = ke.submitted_by
+      JOIN branches br ON br.id = ke.branch_id
+      LEFT JOIN users ap ON ap.id = ke.approved_by
+      WHERE ke.org_id=$1
+    `;
+    const params = [oid];
+    if(branch_id) { params.push(branch_id); sql += ` AND ke.branch_id=$${params.length}`; }
+    if(from) { params.push(from); sql += ` AND ke.due_date::text>=$${params.length}`; }
+    if(to) { params.push(to); sql += ` AND ke.due_date::text<=$${params.length}`; }
+    if(status) { params.push(status); sql += ` AND ke.status=$${params.length}`; }
+    sql += ' ORDER BY ke.due_date DESC, kt.category LIMIT 500';
+    const { rows } = await db(sql, params);
+    res.json(rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST submit a KPI entry
+app.post('/api/kpi-entries', auth(['employee','branch_admin']), async (req, res) => {
+  try {
+    const oid = orgId(req);
+    const { kpi_id, value, notes, due_date } = req.body;
+    const today = nowIST().date;
+    const entryDueDate = due_date || today;
+    const isLate = entryDueDate < today;
+
+    // Get KPI template for score calculation
+    const { rows: kpiRows } = await db('SELECT * FROM kpi_templates WHERE id=$1', [kpi_id]);
+    if(!kpiRows[0]) return res.status(404).json({ error: 'KPI not found' });
+    const kpi = kpiRows[0];
+
+    // Calculate score
+    let score = Math.min(100, (Number(value) / Number(kpi.target_value)) * 100);
+    if(isLate) score = score * (1 - (Number(kpi.late_penalty) / 100));
+    score = Math.max(0, Math.round(score * 100) / 100);
+
+    const { rows } = await db(`
+      INSERT INTO kpi_entries (org_id,branch_id,kpi_id,brand_id,submitted_by,entry_date,due_date,value,notes,is_late,score,status)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'submitted')
+      ON CONFLICT (branch_id,kpi_id,due_date)
+      DO UPDATE SET value=$8,notes=$9,is_late=$10,score=$11,entry_date=$6,status='submitted',submitted_by=$5
+      RETURNING *
+    `, [oid, req.user.branch_id, kpi_id, kpi.brand_id, req.user.id,
+        today, entryDueDate, value, notes||null, isLate, score]);
+    res.json(rows[0]);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// PATCH approve/reject KPI entry
+app.patch('/api/kpi-entries/:id', auth(['super_admin','org_admin']), async (req, res) => {
+  try {
+    const { status, rejection_reason } = req.body;
+    await db(`UPDATE kpi_entries SET status=$1, approved_by=$2, approved_at=now(),
+      rejection_reason=COALESCE($3,rejection_reason) WHERE id=$4`,
+      [status, req.user.id, rejection_reason||null, req.params.id]);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET monthly score for a branch
+app.get('/api/kpi-scores', auth(), async (req, res) => {
+  try {
+    const oid = req.query.org_id || orgId(req);
+    const { branch_id, year, month } = req.query;
+    const y = parseInt(year || new Date().getFullYear());
+    const m = parseInt(month || (new Date().getMonth()+1));
+    const from = `${y}-${String(m).padStart(2,'0')}-01`;
+    const to = new Date(y,m,0).toISOString().split('T')[0];
+
+    // Get all KPI templates with their entries for this month
+    let sql = `
+      SELECT kt.id, kt.name, kt.category, kt.weightage, kt.target_value, kt.data_type, kt.frequency,
+             b.name AS brand_name, br.name AS branch_name, br.id AS branch_id,
+             COUNT(ke.id) AS entries_count,
+             AVG(ke.score) AS avg_score,
+             SUM(CASE WHEN ke.is_late THEN 1 ELSE 0 END) AS late_count,
+             SUM(CASE WHEN ke.status='approved' THEN 1 ELSE 0 END) AS approved_count
+      FROM kpi_templates kt
+      LEFT JOIN brands b ON b.id=kt.brand_id
+      CROSS JOIN branches br
+      LEFT JOIN kpi_entries ke ON ke.kpi_id=kt.id AND ke.branch_id=br.id
+        AND ke.due_date::text BETWEEN $1 AND $2
+      WHERE kt.org_id=$3 AND kt.is_active=true AND br.org_id=$3
+    `;
+    const params = [from, to, oid];
+    if(branch_id) { params.push(branch_id); sql += ` AND br.id=$${params.length}`; }
+    sql += ' GROUP BY kt.id, b.name, br.name, br.id ORDER BY br.name, kt.category';
+    const { rows } = await db(sql, params);
+
+    // Compute weighted branch scores
+    const branchScores = {};
+    for(const row of rows) {
+      if(!branchScores[row.branch_id]) {
+        branchScores[row.branch_id] = { branch_name: row.branch_name, branch_id: row.branch_id, kpis: [], total_weight: 0, weighted_score: 0 };
+      }
+      const avgScore = Number(row.avg_score || 0);
+      const weight = Number(row.weightage || 0);
+      branchScores[row.branch_id].kpis.push({ ...row, avg_score: avgScore });
+      branchScores[row.branch_id].total_weight += weight;
+      branchScores[row.branch_id].weighted_score += (avgScore * weight / 100);
+    }
+    res.json({ branches: Object.values(branchScores), year: y, month: m });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── TASKS ─────────────────────────────────────────────────────
+app.get('/api/tasks', auth(), async (req, res) => {
+  try {
+    const oid = req.query.org_id || orgId(req);
+    const { branch_id, assigned_to, status } = req.query;
+    let sql = `
+      SELECT t.*, u.name AS assigned_to_name, cb.name AS created_by_name, br.name AS branch_name
+      FROM tasks t
+      LEFT JOIN users u ON u.id=t.assigned_to
+      LEFT JOIN users cb ON cb.id=t.created_by
+      LEFT JOIN branches br ON br.id=t.branch_id
+      WHERE t.org_id=$1
+    `;
+    const params = [oid];
+    if(branch_id) { params.push(branch_id); sql += ` AND t.branch_id=$${params.length}`; }
+    if(assigned_to) { params.push(assigned_to); sql += ` AND t.assigned_to=$${params.length}`; }
+    if(status) { params.push(status); sql += ` AND t.status=$${params.length}`; }
+    // Auto-mark overdue
+    sql += ` AND true ORDER BY t.due_date ASC NULLS LAST, t.priority DESC`;
+    const { rows } = await db(sql, params);
+    // Mark overdue
+    const today = nowIST().date;
+    const result = rows.map(t => ({
+      ...t,
+      status: t.status !== 'completed' && t.due_date && t.due_date < today ? 'overdue' : t.status
+    }));
+    res.json(result);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/tasks', auth(['super_admin','org_admin','branch_admin']), async (req, res) => {
+  try {
+    const oid = orgId(req);
+    const { title, description, assigned_to, branch_id, due_date, priority } = req.body;
+    const { rows } = await db(`
+      INSERT INTO tasks (org_id,branch_id,title,description,assigned_to,due_date,priority,created_by)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *
+    `, [oid, branch_id||req.user.branch_id, title, description||null,
+        assigned_to||null, due_date||null, priority||'medium', req.user.id]);
+    res.json(rows[0]);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/api/tasks/:id', auth(), async (req, res) => {
+  try {
+    const { status, title, description, due_date, priority, assigned_to } = req.body;
+    const completedAt = status === 'completed' ? new Date().toISOString() : null;
+    await db(`UPDATE tasks SET
+      status=COALESCE($1,status), title=COALESCE($2,title),
+      description=COALESCE($3,description), due_date=COALESCE($4,due_date),
+      priority=COALESCE($5,priority), assigned_to=COALESCE($6,assigned_to),
+      completed_at=COALESCE($7,completed_at) WHERE id=$8`,
+      [status,title,description,due_date,priority,assigned_to,completedAt,req.params.id]);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/tasks/:id', auth(['super_admin','org_admin']), async (req, res) => {
+  try {
+    await db('DELETE FROM tasks WHERE id=$1', [req.params.id]);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ============================================================
 // AUTO-CHECKOUT CRON — with 15 min grace window
 // ============================================================
 
@@ -1598,8 +1840,7 @@ app.post('/api/cron/auto-checkout', async (req, res) => {
 });
 
 // ============================================================
-// CATCH-ALL — Serve React PW
-//A
+// CATCH-ALL — Serve React PWA
 // ============================================================
 app.get('*', (req, res) => {
   res.sendFile(path.join(DIST, 'index.html'));
