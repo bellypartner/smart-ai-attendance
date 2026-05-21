@@ -851,14 +851,30 @@ app.post('/api/attendance/admin-mark', auth(['super_admin', 'org_admin', 'branch
     const cinMins = toMins(check_in_time);
     const workedMins = check_out_time ? Math.max(0, toMins(check_out_time) - cinMins) : null;
 
-    // Admin edit does NOT recalculate late — preserve existing or set false
-    // Admin is correcting records, not penalising
-    const { rows: existing } = await db(
-      'SELECT is_late, late_mins FROM attendance_records WHERE employee_id=$1 AND date::text=$2 LIMIT 1',
-      [employee_id, date]
+    // Recalculate late based on NEW check-in time
+    const { rows: shiftInfo } = await db(`
+      SELECT COALESCE(
+        (SELECT st.start_time FROM shift_schedules ss
+         JOIN shift_templates st ON st.id=ss.shift_id
+         WHERE ss.employee_id=$1 AND ss.date::text=$2
+         ORDER BY ss.is_override DESC LIMIT 1),
+        (SELECT st.start_time FROM users u
+         JOIN shift_templates st ON st.id=u.default_shift_id WHERE u.id=$1),
+        (SELECT st.start_time FROM org_settings os
+         JOIN shift_templates st ON st.id=os.default_shift_id
+         WHERE os.org_id=(SELECT org_id FROM users WHERE id=$1))
+      ) AS start_time
+    `, [employee_id, date]);
+    const { rows: graceInfo } = await db(
+      'SELECT grace_period_mins FROM org_settings WHERE org_id=(SELECT org_id FROM users WHERE id=$1)',
+      [employee_id]
     );
-    const keepIsLate = existing[0]?.is_late || false;
-    const keepLateMins = existing[0]?.late_mins || 0;
+    const grace2 = Number(graceInfo[0]?.grace_period_mins || 15);
+    const shiftStartMins = shiftInfo[0]?.start_time
+      ? toMins(String(shiftInfo[0].start_time).slice(0,5)) : null;
+    const newCinMins = toMins(check_in_time);
+    const keepIsLate = shiftStartMins !== null ? (newCinMins - shiftStartMins > grace2) : false;
+    const keepLateMins = shiftStartMins !== null ? Math.max(0, newCinMins - shiftStartMins) : 0;
 
     await db(`
       INSERT INTO attendance_records
@@ -867,6 +883,7 @@ app.post('/api/attendance/admin-mark', auth(['super_admin', 'org_admin', 'branch
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'approved',true,$10,now(),false,$11,'manual')
       ON CONFLICT (employee_id,date)
       DO UPDATE SET check_in_time=$5,check_out_time=$6,worked_mins=$7,
+                    is_late=$8,late_mins=$9,
                     approval_status='approved',admin_edited=true,edited_by=$10,edited_at=now(),
                     notes=$11,checkout_type='manual',updated_at=now()
     `, [oid, employee_id, sch[0]?.shift_id || null, date, check_in_time, check_out_time || null,
@@ -1086,7 +1103,20 @@ app.get('/api/my-salary', auth(['employee','branch_admin']), async (req, res) =>
     const earlyDeductions = earlyCheckouts * (s.early_checkout_flat_penalty || 50) +
       Math.round((earlyMinsTotal / 60) * hourlyRate);
     const advanceDeduction = Number(advRows[0]?.monthly_deduction || 0);
-    const totalDeductions = lateDeductions + leaveDeductions + noShowDeductions + earlyDeductions + advanceDeduction;
+
+    // Salary adjustments (bonus/deduction/correction)
+    const { rows: adjRows } = await db(`
+      SELECT
+        COALESCE(SUM(CASE WHEN type='bonus' THEN amount ELSE 0 END),0) AS total_bonus,
+        COALESCE(SUM(CASE WHEN type!='bonus' THEN amount ELSE 0 END),0) AS total_deductions
+      FROM salary_adjustments
+      WHERE employee_id=$1 AND year=$2 AND month=$3
+    `, [req.user.id, y, m]).catch(()=>({rows:[{total_bonus:0,total_deductions:0}]}));
+    const adjBonus = Number(adjRows[0]?.total_bonus || 0);
+    const adjDeduction = Number(adjRows[0]?.total_deductions || 0);
+
+    const totalDeductions = lateDeductions + leaveDeductions + noShowDeductions + earlyDeductions + advanceDeduction + adjDeduction;
+    const netEarned = Math.max(0, earnedGross - totalDeductions) + adjBonus;
 
     res.json({
       salary, workingDays: divisor, presentDays, lateDays, clUsed, slUsed,
@@ -1094,8 +1124,8 @@ app.get('/api/my-salary', auth(['employee','branch_admin']), async (req, res) =>
       unauthLeaves, noShows, normalLates, excessLates,
       dailyRate, earnedGross, lateDeductions,
       leaveDeductions, noShowDeductions, earlyDeductions,
-      earlyCheckouts, advanceDeduction,
-      totalDeductions, netEarned: Math.max(0, earnedGross - totalDeductions),
+      earlyCheckouts, advanceDeduction, adjBonus, adjDeduction,
+      totalDeductions, netEarned,
       category: cat?.name || null,
     });
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -1142,11 +1172,19 @@ app.get('/api/salary-report', auth(['super_admin', 'org_admin', 'branch_admin'])
       const lateDeductions = lateDays * (s.late_deduction_per_occ || 50) + excessLates * (s.excess_late_penalty || 100);
       const leaveDeductions = unauthLeaves * (s.unauth_leave_penalty || 200);
       const noShowDeductions = noShows * (s.no_show_penalty || 250);
-      const totalDeductions = lateDeductions + leaveDeductions + noShowDeductions;
+      // Include advance deductions
+      const { rows: empAdvRows } = await db(`SELECT COALESCE(SUM(monthly_recovery),0) AS adv FROM salary_advances WHERE employee_id=$1 AND status='recovering'`, [emp.id]).catch(()=>({rows:[{adv:0}]}));
+      const advDeduction = Number(empAdvRows[0]?.adv || 0);
+      // Include salary adjustments
+      const { rows: empAdjRows } = await db(`SELECT COALESCE(SUM(CASE WHEN type='bonus' THEN amount ELSE 0 END),0) AS bonus, COALESCE(SUM(CASE WHEN type!='bonus' THEN amount ELSE 0 END),0) AS deductions FROM salary_adjustments WHERE employee_id=$1 AND year=$2 AND month=$3`, [emp.id, y, m]).catch(()=>({rows:[{bonus:0,deductions:0}]}));
+      const adjBonus = Number(empAdjRows[0]?.bonus || 0);
+      const adjDeduction = Number(empAdjRows[0]?.deductions || 0);
+      const totalDeductions = lateDeductions + leaveDeductions + noShowDeductions + advDeduction + adjDeduction;
       return {
         ...emp, presentDays, lateDays, unauthLeaves, noShows, casualUsed,
         dailyRate, earnedGross, lateDeductions, leaveDeductions, noShowDeductions,
-        totalDeductions, netEarned: Math.max(0, earnedGross - totalDeductions),
+        advDeduction, adjBonus, adjDeduction,
+        totalDeductions, netEarned: Math.max(0, earnedGross - totalDeductions) + adjBonus,
       };
     }));
 

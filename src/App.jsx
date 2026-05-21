@@ -182,53 +182,21 @@ function QRCanvas({data:qd, size=200}) {
 }
 
 // ── QR SCANNER ─────────────────────────────────────────────────────────────
-function QRScanner({onScan, onClose, branches}) {
-  const vRef=useRef(null);
-  const [err,setErr]=useState(null);
-  const [streaming,setStreaming]=useState(false);
-  const [selBranch,setSelBranch]=useState(branches[0]?.id||"");
+function QRScanner({onScan, onClose, branches, user}) {
   useEffect(()=>{
-    let st;
-    navigator.mediaDevices?.getUserMedia({video:{facingMode:"environment"}})
-      .then(s=>{st=s;if(vRef.current)vRef.current.srcObject=s;setStreaming(true);})
-      .catch(()=>setErr("Camera unavailable"));
-    return ()=>st?.getTracks().forEach(t=>t.stop());
-  },[]);
-  return(
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.72)",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:999}}>
-      <div style={{background:C.white,borderRadius:"28px 28px 0 0",padding:24,width:"100%",maxWidth:480,animation:"slideUp .3s ease"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
-          <div>
-            <h3 style={{fontSize:18,fontWeight:800,color:C.g800}}>Mark Attendance</h3>
-            <p style={{color:C.gr500,fontSize:12}}>Scan QR or select your branch below</p>
-          </div>
-          <button onClick={onClose} style={S.iconBtn}>✕</button>
-        </div>
-        <div style={{background:"#000",borderRadius:18,height:300,width:"100%",position:"relative",overflow:"hidden",marginBottom:14}}>
-          <video ref={vRef} autoPlay playsInline muted style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-          <div style={{position:"absolute",inset:14,border:`2px solid ${C.g500}`,borderRadius:10}}/>
-          {streaming&&<div style={{position:"absolute",left:14,right:14,height:2,background:`linear-gradient(90deg,transparent,${C.g500},transparent)`,top:"40%",animation:"scanline 2s ease-in-out infinite"}}/>}
-        </div>
-        {err&&(
-          <div style={{background:"#fffbeb",border:"1px solid #fcd34d",borderRadius:12,padding:12,marginBottom:8}}>
-            <p style={{color:"#92400e",fontWeight:700,fontSize:13}}>⚠ {err}</p>
-            <p style={{color:"#78350f",fontSize:12,marginTop:4}}>Camera not available — select your branch below and tap Mark Attendance directly. Your location will still be verified.</p>
-          </div>
-        )}
-        <p style={{color:C.g700,fontSize:13,fontWeight:700,marginBottom:8}}>Select your branch:</p>
-        <select style={{...S.select,marginBottom:10}} value={selBranch} onChange={e=>setSelBranch(e.target.value)}>
-          <option value="">— Select branch —</option>
-          {branches.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}
-        </select>
-        <button onClick={()=>{if(!selBranch){setErr("Select a branch first");return;}onScan({branchId:selBranch,token:"SMARTAI_V4",app:"3SL"});}}
-          disabled={!selBranch}
-          style={{...S.btn,opacity:selBranch?1:0.5}}>
-          📍 Mark at {branches.find(b=>b.id===selBranch)?.name||"Branch"}
-        </button>
-        <p style={{color:C.gr500,fontSize:11,textAlign:"center",marginTop:8}}>Your location will be verified automatically</p>
-      </div>
-    </div>
-  );
+    if(!branches||branches.length===0){
+      alert("Branch data not loaded. Please try again.");
+      onClose(); return;
+    }
+    const userBranch = branches.find(b=>b.id===user?.branch_id);
+    if(userBranch) {
+      onScan({branchId:userBranch.id, token:"SMARTAI_V4", app:"3SL"});
+    } else {
+      alert("No branch assigned to your account. Contact your Org Admin.");
+      onClose();
+    }
+  },[branches]);
+  return null;
 }
 
 // ── LOADING & ERROR ────────────────────────────────────────────────────────
@@ -395,7 +363,7 @@ function EmpApp({user, notify, page, setPage, onLogout}) {
   const myBranch = branches.find(b=>b.id===user.branch_id);
   const myBranches = branches.filter(b=>b.org_id===user.org_id);
 
-  const empNav=[{k:"home",i:"🏠",l:"Home"},{k:"shifts",i:"📅",l:"Shifts"},{k:"history",i:"📋",l:"History"},{k:"salary",i:"💰",l:"Salary"},{k:"advances",i:"💳",l:"Advance"},{k:"calendar",i:"📅",l:"Calendar"},,{k:"kpi",i:"📊",l:"KPI"},{k:"tasks",i:"✔️",l:"Tasks"},{k:"profile",i:"👤",l:"Profile"}];
+  const empNav=[{k:"home",i:"🏠",l:"Home"},{k:"shifts",i:"📅",l:"Shifts"},{k:"history",i:"📋",l:"History"},{k:"salary",i:"💰",l:"Salary"},{k:"advances",i:"💳",l:"Advance"},{k:"calendar",i:"📅",l:"Calendar"},{k:"profile",i:"👤",l:"Profile"}];
   const pages={
     home: <EmpHome user={user} branch={myBranch} todayAtt={todayAtt} loading={loading} onScan={()=>setShowScanner(true)}/>,
     shifts: <EmpShifts user={user} notify={notify}/>,
@@ -404,12 +372,10 @@ function EmpApp({user, notify, page, setPage, onLogout}) {
     profile: <EmpProfile user={user} notify={notify}/>,
     advances: <EmpAdvances user={user} notify={notify}/>,
     calendar: <AttendanceCalendar user={user} notify={notify} isAdmin={false} activeOrgId={user.org_id}/>,
-      kpi: <KPIDailyEntry user={user} notify={notify}/>,
-      tasks: <TaskManager user={user} notify={notify} activeOrgId={user.org_id} isAdminView={false}/>,
   };
   return(
     <div style={{display:"flex",flexDirection:"column",height:"100vh",maxWidth:480,margin:"0 auto",background:C.g50}}>
-      {showScanner&&<QRScanner onScan={handleScan} onClose={()=>setShowScanner(false)} branches={myBranches}/>}
+      {showScanner&&<QRScanner onScan={handleScan} onClose={()=>setShowScanner(false)} branches={myBranches} user={user}/>}
       <TopBar user={user} onLogout={onLogout}/>
       <div style={{flex:1,overflowY:"auto",paddingBottom:80}}>{pages[page]||pages.home}</div>
       <BottomNav items={empNav} page={page} setPage={setPage}/>
@@ -633,12 +599,14 @@ function EmpSalary({user, notify}) {
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
   const now = new Date();
-  useEffect(()=>{
+  const load = () => {
+    setLoading(true);
     GET("/api/my-salary",{year:now.getFullYear(),month:now.getMonth()+1})
       .then(r=>setReport(r))
       .catch(e=>notify(e.message,"error"))
       .finally(()=>setLoading(false));
-  },[]);
+  };
+  useEffect(()=>{ load(); },[]);
   if(loading) return <Spinner/>;
   if(!report) return <Empty icon="💰" msg="No salary data yet"/>;
   return(
@@ -652,12 +620,27 @@ function EmpSalary({user, notify}) {
           <div style={{background:C.g300,height:7,borderRadius:8,width:`${Math.min(100,((report.netEarned||0)/(user.salary||1))*100)}%`}}/>
         </div>
       </div>
-      {[["Days Present",report.presentDays],["Gross Earned",fmt(report.earnedGross||0)],["Late Deductions",`-${fmt(report.lateDeductions||0)}`],["CL used/allowed",`${report.clUsed||0}/${report.clAllowed||0}`],["SL used/allowed",`${report.slUsed||0}/${report.slAllowed||0}`],["Leave Deductions",`-${fmt(report.leaveDeductions||0)}`],["No-Show",`-${fmt(report.noShowDeductions||0)}`],["Early Checkout",`-${fmt(report.earlyDeductions||0)}`],["Advance Recovery",`-${fmt(report.advanceDeduction||0)}`],["Net Earned",fmt(report.netEarned||0)]].map(([l,v])=>(
-        <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"10px 0",borderBottom:`1px solid ${C.g50}`}}>
-          <span style={{color:C.gr500,fontSize:14}}>{l}</span>
-          <span style={{color:C.gr900,fontWeight:700,fontSize:14}}>{v}</span>
-        </div>
-      ))}
+      {
+        ([
+          ["Days Present", report.presentDays],
+          ["Gross Earned", fmt(report.earnedGross||0)],
+          ["Late Deductions", `-${fmt(report.lateDeductions||0)}`],
+          ["CL used/allowed", `${report.clUsed||0}/${report.clAllowed||0}`],
+          ["SL used/allowed", `${report.slUsed||0}/${report.slAllowed||0}`],
+          ["Leave Deductions", `-${fmt(report.leaveDeductions||0)}`],
+          ["No-Show", `-${fmt(report.noShowDeductions||0)}`],
+          ["Early Checkout", `-${fmt(report.earlyDeductions||0)}`],
+          ["Advance Recovery", `-${fmt(report.advanceDeduction||0)}`],
+          ...(report.adjBonus>0 ? [["Bonus", `+${fmt(report.adjBonus)}`]] : []),
+          ...(report.adjDeduction>0 ? [["Manual Deduction", `-${fmt(report.adjDeduction)}`]] : []),
+          ["Net Earned", fmt(report.netEarned||0)]
+        ]).map(([l,v]) => (
+          <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"10px 0",borderBottom:`1px solid ${C.g50}`}}>
+            <span style={{color:C.gr500,fontSize:14}}>{l}</span>
+            <span style={{color:C.gr900,fontWeight:700,fontSize:14}}>{v}</span>
+          </div>
+        ))
+      }
     </div>
   );
 }
@@ -1979,7 +1962,8 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
             )}
             </div>
           </div>
-        )
+        
+         )
       }
     </div>
   );
@@ -3145,7 +3129,7 @@ function BranchAdminPersonalView({user, notify, page, setPage}) {
 
   return(
     <>
-      {showScanner&&<QRScanner onScan={handleScan} onClose={()=>setShowScanner(false)} branches={branches}/>}
+      {showScanner&&<QRScanner onScan={handleScan} onClose={()=>setShowScanner(false)} branches={branches} user={user}/>}
       <div style={{flex:1,overflowY:"auto",paddingBottom:80}}>{empPages[page]||empPages.home}</div>
       <BottomNav items={empNav} page={page} setPage={setPage}/>
     </>
