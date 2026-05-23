@@ -610,38 +610,41 @@ function EmpSalary({user, notify}) {
   if(loading) return <Spinner/>;
   if(!report) return <Empty icon="💰" msg="No salary data yet"/>;
   return(
-    <div style={{padding:20}}>
-      <h2 style={{color:C.g800,fontSize:22,fontWeight:800,marginBottom:16}}>Salary Dashboard</h2>
-      <div style={{background:`linear-gradient(135deg,${C.g800},${C.g600})`,borderRadius:24,padding:24,marginBottom:20}}>
-        <p style={{color:"rgba(255,255,255,0.65)",fontSize:13}}>{now.toLocaleDateString("en-IN",{month:"long",year:"numeric"})}</p>
-        <p style={{color:C.white,fontSize:36,fontWeight:900,margin:"6px 0 2px"}}>{fmt(report.netEarned||0)}</p>
-        <p style={{color:"rgba(255,255,255,0.55)",fontSize:13}}>of {fmt(report?.salary||user.salary||0)}/month</p>
-        <div style={{background:"rgba(255,255,255,0.15)",borderRadius:8,height:7,marginTop:14}}>
-          <div style={{background:C.g300,height:7,borderRadius:8,width:`${Math.min(100,((report.netEarned||0)/(user.salary||1))*100)}%`}}/>
-        </div>
-      </div>
-      {
-        ([
-          ["Days Present", report.presentDays],
-          ["Gross Earned", fmt(report.earnedGross||0)],
-          ["Late Deductions", `-${fmt(report.lateDeductions||0)}`],
-          ["CL used/allowed", `${report.clUsed||0}/${report.clAllowed||0}`],
-          ["SL used/allowed", `${report.slUsed||0}/${report.slAllowed||0}`],
-          ["Leave Deductions", `-${fmt(report.leaveDeductions||0)}`],
-          ["No-Show", `-${fmt(report.noShowDeductions||0)}`],
-          ["Early Checkout", `-${fmt(report.earlyDeductions||0)}`],
-          ["Advance Recovery", `-${fmt(report.advanceDeduction||0)}`],
-          ...(report.adjBonus>0 ? [["Bonus", `+${fmt(report.adjBonus)}`]] : []),
-          ...(report.adjDeduction>0 ? [["Manual Deduction", `-${fmt(report.adjDeduction)}`]] : []),
-          ["Net Earned", fmt(report.netEarned||0)]
-        ]).map(([l,v]) => (
-          <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"10px 0",borderBottom:`1px solid ${C.g50}`}}>
-            <span style={{color:C.gr500,fontSize:14}}>{l}</span>
-            <span style={{color:C.gr900,fontWeight:700,fontSize:14}}>{v}</span>
+    <>
+      <div style={{padding:20}}>
+        <h2 style={{color:C.g800,fontSize:22,fontWeight:800,marginBottom:16}}>Salary Dashboard</h2>
+        <div style={{background:`linear-gradient(135deg,${C.g800},${C.g600})`,borderRadius:24,padding:24,marginBottom:20}}>
+          <p style={{color:"rgba(255,255,255,0.65)",fontSize:13}}>{now.toLocaleDateString("en-IN",{month:"long",year:"numeric"})}</p>
+          <p style={{color:C.white,fontSize:36,fontWeight:900,margin:"6px 0 2px"}}>{fmt(report.netEarned||0)}</p>
+          <p style={{color:"rgba(255,255,255,0.55)",fontSize:13}}>of {fmt(report?.salary||user.salary||0)}/month</p>
+          <div style={{background:"rgba(255,255,255,0.15)",borderRadius:8,height:7,marginTop:14}}>
+            <div style={{background:C.g300,height:7,borderRadius:8,width:`${Math.min(100,((report.netEarned||0)/(user.salary||1))*100)}%`}}/>
           </div>
-        ))
-      }
-    </div>
+        </div>
+        {
+          ([
+            ["Days Present", report.presentDays],
+            ["Gross Earned", fmt(report.earnedGross||0)],
+            ["Late Deductions", `-${fmt(report.lateDeductions||0)}`],
+            ["CL used/allowed", `${report.clUsed||0}/${report.clAllowed||0}`],
+            ["SL used/allowed", `${report.slUsed||0}/${report.slAllowed||0}`],
+            ["Leave Deductions", `-${fmt(report.leaveDeductions||0)}`],
+            ["No-Show", `-${fmt(report.noShowDeductions||0)}`],
+            ["Early Checkout", `-${fmt(report.earlyDeductions||0)}`],
+            ["Advance Recovery", `-${fmt(report.advanceDeduction||0)}`],
+            ...(report.adjBonus>0 ? [["Bonus", `+${fmt(report.adjBonus)}`]] : []),
+            ...(report.adjDeduction>0 ? [["Manual Deduction", `-${fmt(report.adjDeduction)}`]] : []),
+            ["Net Earned", fmt(report.netEarned||0)]
+          ]).map(([l,v]) => (
+            <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"10px 0",borderBottom:`1px solid ${C.g50}`}}>
+              <span style={{color:C.gr500,fontSize:14}}>{l}</span>
+              <span style={{color:C.gr900,fontWeight:700,fontSize:14}}>{v}</span>
+            </div>
+          ))
+        }
+      </div>
+      <SalarySlip user={user} notify={notify}/>
+    </>
   );
 }
 
@@ -1461,6 +1464,49 @@ function AdminReports({user, notify, activeOrgId}) {
               <span key={l} style={{background:`${c}15`,color:c,fontSize:12,padding:"3px 10px",borderRadius:20,fontWeight:700}}>{l}: {v||0}</span>
             ))}
           </div>
+          <button
+            onClick={()=>{
+              const [y,m]=selMonth.split("-").map(Number);
+              const w=window.open("","_blank");
+              if(w){w.document.write("<p>Loading salary slip...</p>");}
+              GET("/api/salary-slip",{employee_id:e.id,year:y,month:m})
+                .then(slip=>{
+                  if(!w||w.closed){return;}
+                  const mn=["January","February","March","April","May","June","July","August","September","October","November","December"];
+                  const fmt2=n=>"₹"+Number(n||0).toLocaleString("en-IN",{minimumFractionDigits:2,maximumFractionDigits:2});
+                  const adjHtml=(slip.deductions.adjustments||[]).map(a=>"<tr><td style='padding:4px 8px;color:#6b7280;font-size:12px'>"+(a.type==="bonus"?"+ Bonus: ":"- Deduction: ")+a.reason+"</td><td style='padding:4px 8px;text-align:right;font-size:12px'>"+fmt2(a.amount)+"</td></tr>").join("");
+                  const html="<html><head><title>Salary Slip - "+slip.employee.name+"</title><style>body{font-family:Arial,sans-serif;margin:0;padding:20px;color:#111}.header{text-align:center;margin-bottom:20px;border-bottom:2px solid #166534;padding-bottom:12px}.org{font-size:22px;font-weight:900;color:#166534}.emp-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px 20px;margin:16px 0;background:#f0faf4;padding:12px;border-radius:8px}.emp-row{font-size:13px}.emp-label{color:#6b7280;font-size:11px}table{width:100%;border-collapse:collapse;margin-top:12px}tr:nth-child(even){background:#f9fafb}td{padding:7px 10px;font-size:13px}td:last-child{text-align:right}.sh td{background:#166534;color:#fff;font-weight:700;font-size:12px;padding:6px 10px}.net td{font-weight:900;font-size:18px;background:#166534;color:#fff}.footer{margin-top:30px;display:grid;grid-template-columns:1fr 1fr;gap:20px}.sign{text-align:center;border-top:1px solid #374151;padding-top:8px;font-size:12px;color:#6b7280}</style></head><body>"
+                  +"<div class='header'><div class='org'>"+slip.employee.org_name+"</div><div style='font-size:16px;color:#374151;margin-top:4px'>SALARY SLIP — "+mn[m-1]+" "+y+"</div></div>"
+                  +"<div class='emp-grid'>"
+                  +"<div class='emp-row'><div class='emp-label'>Employee</div>"+slip.employee.name+"</div>"
+                  +"<div class='emp-row'><div class='emp-label'>Designation</div>"+(slip.employee.designation||"—")+"</div>"
+                  +"<div class='emp-row'><div class='emp-label'>Branch</div>"+(slip.employee.branch_name||"—")+"</div>"
+                  +"<div class='emp-row'><div class='emp-label'>Employee Code</div>"+(slip.employee.employee_code||"—")+"</div>"
+                  +"<div class='emp-row'><div class='emp-label'>Category</div>"+(slip.employee.job_category||"—")+"</div>"
+                  +"<div class='emp-row'><div class='emp-label'>Date of Joining</div>"+(slip.employee.date_of_joining?new Date(slip.employee.date_of_joining).toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"}):"—")+"</div>"
+                  +"</div>"
+                  +"<table><tr class='sh'><td colspan='2'>EARNINGS</td></tr>"
+                  +"<tr><td>Basic Salary</td><td>"+fmt2(slip.earnings.salary)+"</td></tr>"
+                  +"<tr><td>Days Present / Total</td><td>"+slip.attendance.presentDays+" / "+slip.period.divisor+"</td></tr>"
+                  +"<tr><td>Gross Earned</td><td>"+fmt2(slip.earnings.earnedGross)+"</td></tr>"
+                  +"<tr class='sh'><td colspan='2'>DEDUCTIONS</td></tr>"
+                  +"<tr><td>Late penalty ("+slip.deductions.excessLates+" days after "+slip.deductions.monthlyGraceDays+" free)</td><td>"+fmt2(slip.deductions.lateDeduction)+"</td></tr>"
+                  +"<tr><td>Half day ("+slip.attendance.halfDays+" days)</td><td>"+fmt2(slip.deductions.halfDayDeduction)+"</td></tr>"
+                  +"<tr><td>Leave deduction</td><td>"+fmt2(slip.deductions.leaveDeduction)+"</td></tr>"
+                  +"<tr><td>Early checkout ("+slip.deductions.earlyCheckouts+" times)</td><td>"+fmt2(slip.deductions.earlyDeduction)+"</td></tr>"
+                  +"<tr><td>Advance recovery</td><td>"+fmt2(slip.deductions.advanceDeduction)+"</td></tr>"
+                  +"<tr><td>Manual deductions</td><td>"+fmt2(slip.deductions.adjDeduction)+"</td></tr>"
+                  +adjHtml
+                  +"<tr style='background:#fee2e2'><td style='font-weight:700'>Total Deductions</td><td style='font-weight:700;color:#dc2626'>"+fmt2(slip.deductions.totalDeductions)+"</td></tr>"
+                  +(slip.deductions.adjBonus>0?"<tr><td>Bonus</td><td style='color:#16a34a'>+"+fmt2(slip.deductions.adjBonus)+"</td></tr>":"")
+                  +"<tr class='net'><td>NET PAYABLE</td><td>"+fmt2(slip.netEarned)+"</td></tr>"
+                  +"</table>"
+                  +"<div class='footer'><div class='sign'>Employee Signature</div><div class='sign'>Authorised Signatory</div></div>"
+                  +"</body></html>";
+                  w.document.write(html);w.document.close();setTimeout(()=>w.print(),600);
+                }).catch(err=>{if(w&&!w.closed)w.document.write("<p>Error: "+err.message+"</p>");});
+            }}
+            style={{marginTop:8,background:"#7c3aed",border:"none",borderRadius:10,color:"#fff",padding:"8px 16px",cursor:"pointer",fontSize:12,fontWeight:700,width:"100%"}}>🖨 Download Salary Slip</button>
         </div>
       ))}
       {list.length===0&&<Empty icon="📊" msg="No data for this month"/>}
@@ -1529,7 +1575,7 @@ function AdminSettings({user, notify, activeOrgId}) {
   };
 
   if(loading||!settings) return <Spinner/>;
-  const fields=[["grace_period_mins","Grace period (mins)"],["late_deduction_per_occ","Late deduction (₹)"],["max_allowed_lates_per_month","Max lates/month"],["excess_late_penalty","Excess late penalty (₹)"],["unauth_leave_penalty","Unauth leave penalty (₹)"],["no_show_penalty","No-show penalty (₹)"],["casual_leave_per_month","Casual leave/month"],["working_days_per_month","Working days/month"],["geo_fence_radius_meters","Geo-fence radius (m)"]];
+  const fields=[["grace_period_mins","Grace period (mins)"],["half_day_threshold_hrs","Half-day threshold (hrs)"],["late_deduction_per_occ","Late deduction (₹)"],["max_allowed_lates_per_month","Max lates/month"],["excess_late_penalty","Excess late penalty (₹)"],["unauth_leave_penalty","Unauth leave penalty (₹)"],["no_show_penalty","No-show penalty (₹)"],["casual_leave_per_month","Casual leave/month"],["working_days_per_month","Working days/month"],["geo_fence_radius_meters","Geo-fence radius (m)"]];
   <><label style={S.label}>Early checkout flat penalty (₹)</label><input style={S.input} type="number" value={settings.early_checkout_flat_penalty || 50}
     onChange={e => setSettings(s => ({ ...s, early_checkout_flat_penalty: e.target.value }))} /><p style={{ color: C.gr500, fontSize: 12, marginBottom: 10 }}>Fixed penalty per early checkout + proportional hourly deduction auto-calculated from salary</p></>
   return(
@@ -1957,6 +2003,21 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
                 Cancel
               </button>
             </div>
+            {/* Mark Absent Button */}
+            <button
+              onClick={async()=>{
+                if(!editForm.notes||!editForm.notes.trim()){notify("Reason required to mark absent","error");return;}
+                if(!window.confirm("Mark "+editRec.employee_name+" as ABSENT on "+editRec.date+"? This will delete their attendance record.")) return;
+                try{
+                  await POST("/api/attendance/admin-mark",{employee_id:editRec.employee_id,date:editRec.date,notes:editForm.notes,clear:true});
+                  notify("Marked as absent ✓");
+                  setEditRec(null);
+                  await loadRecords();
+                }catch(e){notify(e.message,"error");}
+              }}
+              style={{width:"100%",background:"#ef4444",border:"none",borderRadius:14,color:"#fff",padding:"12px",fontSize:13,fontWeight:700,cursor:"pointer",marginBottom:8}}>
+              🚫 Mark as Absent
+            </button>
             {editRec?.is_early_checkout&&!editRec?.early_penalty_waived&&(
               <button style={{...S.btn,background:"#d97706",marginTop:8}}
                 onClick={async()=>{try{await PATCH("/api/attendance/"+editRec.id+"/waive-early",{});notify("Early checkout penalty waived ✓");setEditRec(null);await loadRecords();}catch(e){notify(e.message,"error");}}}>
@@ -4210,6 +4271,160 @@ function SalaryAdjustmentManager({notify, activeOrgId}) {
         </div>
       ))}
       {adjustments.length===0&&selEmp&&<p style={{color:C.gr500,textAlign:"center",padding:20}}>No adjustments this month</p>}
+    </div>
+  );
+}
+
+
+// ── SALARY SLIP PDF ───────────────────────────────────────────
+const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+
+function SalarySlip({user, notify, empId, empName, isAdmin}) {
+  const now = new Date();
+  const [selMonth, setSelMonth] = useState(now.getFullYear()+"-"+pad(now.getMonth()+1));
+  const [slip, setSlip] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    const [y,m] = selMonth.split("-").map(Number);
+    try {
+      const params = {year:y, month:m};
+      if(empId && empId !== user.id) params.employee_id = empId;
+      const data = await GET("/api/salary-slip", params);
+      setSlip(data);
+    } catch(e) { notify(e.message,"error"); }
+    finally { setLoading(false); }
+  };
+
+  const printSlip = () => {
+    if(!slip) return;
+    const [y,m] = selMonth.split("-").map(Number);
+    const monthName = MONTH_NAMES[m-1];
+    const fmt2 = n => "₹"+Number(n||0).toLocaleString("en-IN",{minimumFractionDigits:2,maximumFractionDigits:2});
+    
+    const rows = [
+      ["Basic Salary", fmt2(slip.earnings.salary)],
+      ["Working Days", slip.period.divisor],
+      ["Days Present", slip.attendance.presentDays],
+      ["Days Absent", slip.attendance.absentDays],
+      ["Half Days", slip.attendance.halfDays],
+      ["Late Arrivals", slip.attendance.lateDays],
+      ["Gross Earned", fmt2(slip.earnings.earnedGross)],
+      ["---","---"],
+      ["DEDUCTIONS",""],
+      ["Late Penalty", fmt2(slip.deductions.lateDeduction)],
+      ["Half Day Deduction", fmt2(slip.deductions.halfDayDeduction)],
+      ["Leave Deduction", fmt2(slip.deductions.leaveDeduction)],
+      ["Early Checkout Penalty", fmt2(slip.deductions.earlyDeduction)],
+      ["Advance Recovery", fmt2(slip.deductions.advanceDeduction)],
+      ["Manual Deductions", fmt2(slip.deductions.adjDeduction)],
+      ["Total Deductions", fmt2(slip.deductions.totalDeductions)],
+      ["---","---"],
+      ...(slip.deductions.adjBonus>0?[["Bonus Added", "+"+fmt2(slip.deductions.adjBonus)]]:[] ),
+      ["NET PAYABLE", fmt2(slip.netEarned)],
+    ];
+
+    const adjHtml = slip.deductions.adjustments?.length > 0
+      ? slip.deductions.adjustments.map(a =>
+          "<tr><td style='padding:4px 8px;color:#6b7280;font-size:12px'>" +
+          (a.type==="bonus"?"+ Bonus: ":"- Deduction: ") + a.reason +
+          "</td><td style='padding:4px 8px;text-align:right;font-size:12px'>" +
+          fmt2(a.amount) + "</td></tr>"
+        ).join("")
+      : "";
+
+    const html = "<html><head><title>Salary Slip - "+slip.employee.name+"</title>"
+      +"<style>body{font-family:Arial,sans-serif;margin:0;padding:20px;color:#111}"
+      +".header{text-align:center;margin-bottom:20px;border-bottom:2px solid #166534;padding-bottom:12px}"
+      +".org{font-size:22px;font-weight:900;color:#166534}"
+      +".title{font-size:16px;color:#374151;margin-top:4px}"
+      +".emp-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px 20px;margin:16px 0;background:#f0faf4;padding:12px;border-radius:8px}"
+      +".emp-row{font-size:13px;color:#374151}"
+      +".emp-label{color:#6b7280;font-size:11px}"
+      +"table{width:100%;border-collapse:collapse;margin-top:12px}"
+      +"tr:nth-child(even){background:#f9fafb}"
+      +"td{padding:7px 10px;font-size:13px}"
+      +"td:last-child{text-align:right}"
+      +".section-header td{background:#166534;color:#fff;font-weight:700;font-size:12px;letter-spacing:1px;padding:6px 10px}"
+      +".total-row td{font-weight:900;font-size:15px;background:#dcfce7;color:#166534;border-top:2px solid #166534}"
+      +".net-row td{font-weight:900;font-size:18px;background:#166534;color:#fff}"
+      +".footer{margin-top:30px;display:grid;grid-template-columns:1fr 1fr;gap:20px}"
+      +".sign-box{text-align:center;border-top:1px solid #374151;padding-top:8px;font-size:12px;color:#6b7280}"
+      +"</style></head><body>"
+      +"<div class='header'><div class='org'>"+slip.employee.org_name+"</div>"
+      +"<div class='title'>SALARY SLIP — "+monthName+" "+y+"</div></div>"
+      +"<div class='emp-grid'>"
+      +"<div class='emp-row'><div class='emp-label'>Employee Name</div>"+slip.employee.name+"</div>"
+      +"<div class='emp-row'><div class='emp-label'>Designation</div>"+(slip.employee.designation||"—")+"</div>"
+      +"<div class='emp-row'><div class='emp-label'>Branch</div>"+(slip.employee.branch_name||"—")+"</div>"
+      +"<div class='emp-row'><div class='emp-label'>Employee Code</div>"+(slip.employee.employee_code||"—")+"</div>"
+      +"<div class='emp-row'><div class='emp-label'>Date of Joining</div>"+(slip.employee.date_of_joining?new Date(slip.employee.date_of_joining).toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"}):"—")+"</div>"
+      +"<div class='emp-row'><div class='emp-label'>Job Category</div>"+(slip.employee.job_category||"—")+"</div>"
+      +"</div>"
+      +"<table>"
+      +"<tr class='section-header'><td colspan='2'>EARNINGS & ATTENDANCE</td></tr>"
+      + rows.filter(r=>r[0]!=="---"&&r[0]!=="DEDUCTIONS"&&r[0]!=="NET PAYABLE"&&r[0]!=="Bonus Added"&&!r[0].includes("Deduction")&&!r[0].includes("Penalty")&&!r[0].includes("Recovery")).map(r=>
+          "<tr><td>"+r[0]+"</td><td>"+r[1]+"</td></tr>"
+        ).join("")
+      +"<tr class='section-header'><td colspan='2'>DEDUCTIONS</td></tr>"
+      +"<tr><td>Late penalty ("+slip.deductions.excessLates+" days after "+slip.deductions.monthlyGraceDays+" free)</td><td>"+fmt2(slip.deductions.lateDeduction)+"</td></tr>"
+      +"<tr><td>Half day deduction ("+slip.attendance.halfDays+" days)</td><td>"+fmt2(slip.deductions.halfDayDeduction)+"</td></tr>"
+      +"<tr><td>Leave deduction</td><td>"+fmt2(slip.deductions.leaveDeduction)+"</td></tr>"
+      +"<tr><td>Early checkout penalty ("+slip.deductions.earlyCheckouts+" times)</td><td>"+fmt2(slip.deductions.earlyDeduction)+"</td></tr>"
+      +"<tr><td>Advance recovery</td><td>"+fmt2(slip.deductions.advanceDeduction)+"</td></tr>"
+      +"<tr><td>Manual deductions</td><td>"+fmt2(slip.deductions.adjDeduction)+"</td></tr>"
+      + adjHtml
+      +"<tr class='total-row'><td>Total Deductions</td><td>"+fmt2(slip.deductions.totalDeductions)+"</td></tr>"
+      +(slip.deductions.adjBonus>0?"<tr><td>Bonus</td><td>+"+fmt2(slip.deductions.adjBonus)+"</td></tr>":"")
+      +"<tr class='net-row'><td>NET PAYABLE</td><td>"+fmt2(slip.netEarned)+"</td></tr>"
+      +"</table>"
+      +"<div class='footer'>"
+      +"<div class='sign-box'>Employee Signature</div>"
+      +"<div class='sign-box'>Authorised Signatory</div>"
+      +"</div>"
+      +"</body></html>";
+
+    const w = window.open("","_blank");
+    if(w) { w.document.write(html); w.document.close(); setTimeout(()=>w.print(), 600); }
+  };
+
+  return(
+    <div style={{background:C.white,borderRadius:20,padding:20,marginTop:16,boxShadow:`0 2px 10px ${C.g300}33`}}>
+      <p style={{color:C.g800,fontWeight:800,fontSize:15,marginBottom:12}}>📄 Salary Slip</p>
+      <div style={{display:"flex",gap:8,marginBottom:12}}>
+        <input style={{...S.input,flex:1,marginBottom:0}} type="month" value={selMonth} onChange={e=>setSelMonth(e.target.value)}/>
+        <button style={{...S.btn,width:"auto",padding:"0 16px"}} onClick={load} disabled={loading}>
+          {loading?"Loading...":"Generate"}
+        </button>
+      </div>
+      {slip&&(
+        <>
+          <div style={{background:C.g50,borderRadius:14,padding:14,marginBottom:12}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+              <p style={{color:C.g800,fontWeight:800}}>{slip.employee.name}</p>
+              <p style={{color:C.g600,fontWeight:900,fontSize:18}}>₹{Number(slip.netEarned).toLocaleString("en-IN")}</p>
+            </div>
+            <p style={{color:C.gr500,fontSize:12}}>{MONTH_NAMES[selMonth.split("-")[1]-1]} {selMonth.split("-")[0]} · {slip.attendance.presentDays}/{slip.period.divisor} days present</p>
+            {[
+              ["Gross earned","₹"+Number(slip.earnings.earnedGross).toLocaleString("en-IN")],
+              ["Late penalty","-₹"+Number(slip.deductions.lateDeduction).toLocaleString("en-IN")],
+              ["Half day deduction","-₹"+Number(slip.deductions.halfDayDeduction).toLocaleString("en-IN")],
+              ["Leave deduction","-₹"+Number(slip.deductions.leaveDeduction).toLocaleString("en-IN")],
+              ["Early checkout","-₹"+Number(slip.deductions.earlyDeduction).toLocaleString("en-IN")],
+              ["Advance recovery","-₹"+Number(slip.deductions.advanceDeduction).toLocaleString("en-IN")],
+              ...(slip.deductions.adjBonus>0?[["Bonus","+₹"+Number(slip.deductions.adjBonus).toLocaleString("en-IN")]]: []),
+              ...(slip.deductions.adjDeduction>0?[["Manual deduction","-₹"+Number(slip.deductions.adjDeduction).toLocaleString("en-IN")]]: []),
+            ].map(([l,v])=>(
+              <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"4px 0",borderBottom:`1px solid ${C.g100}`}}>
+                <p style={{color:C.gr500,fontSize:12}}>{l}</p>
+                <p style={{color:C.gr700,fontSize:12,fontWeight:600}}>{v}</p>
+              </div>
+            ))}
+          </div>
+          <button style={{...S.btn,background:"#7c3aed"}} onClick={printSlip}>🖨 Download / Print PDF</button>
+        </>
+      )}
     </div>
   );
 }
