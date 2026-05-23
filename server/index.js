@@ -137,7 +137,8 @@ app.post('/api/auth/login', async (req, res) => {
              jc.cl_per_month, jc.sl_per_month, jc.sunday_off
        FROM users u
        LEFT JOIN organizations o ON o.id = u.org_id
-       LEFT JOIN branches b ON b.id = u.branch_id
+      LEFT JOIN branches b ON b.id = u.branch_id
+       LEFT JOIN job_categories jc ON jc.id = u.job_category_id
        WHERE u.phone = $1 AND u.is_active = true`,
       [phone]
     );
