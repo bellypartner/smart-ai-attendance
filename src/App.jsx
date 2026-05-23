@@ -226,7 +226,11 @@ export default function App() {
     localStorage.setItem("saa_user", JSON.stringify(u));
     setUser(u);
     setActiveOrgId(u.org_id);
-    if(u.role==="super_admin") setPage("sa_orgs");
+    if(u.role==="super_admin") {
+      const savedOrg = localStorage.getItem("saa_default_org");
+      if(savedOrg) { setActiveOrgId(savedOrg); setPage("adm_home"); }
+      else setPage("sa_orgs");
+    }
     else if(u.role==="employee") setPage("home");
     else setPage("adm_home");
     // Register push notifications
@@ -1819,8 +1823,9 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
   };
 
   const loadRecords = async () => {
-    setLoading(true);
+    
     try {
+      setLoading(true);
       let from, to;
       if (view === "day") { from = selDate; to = selDate; }
       else {
@@ -1857,7 +1862,7 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
     }
     const rec = getRec(empId, date);
     // Check half day leave
-    const isHalfDay = leaves.some(l=>l.employee_id===empId&&l.type==='half_day'&&l.from_date?.slice(0,10)===dateStr&&l.status==='approved');
+    const isHalfDay = leaves.some(l=>l.employee_id===empId&&l.type==='half_day'&&String(l.from_date||"").slice(0,10)===dateStr&&l.status==='approved');
     if (rec && rec.check_in_time) {
       if(isHalfDay) return { type:"half_day", label:"HD", color:"#7c3aed", bg:"#ede9fe", rec };
       return rec.is_late

@@ -290,10 +290,12 @@ app.get('/api/employees', auth(['super_admin', 'org_admin', 'branch_admin']), as
              u.designation, u.salary, u.default_shift_id, u.is_active,
              u.status, u.manager_id, u.date_of_joining, u.employee_code,
              u.relieving_date, u.relieving_reason, u.created_at,
-             b.name AS branch_name, st.name AS default_shift_name,
+             b.name AS branch_name, jc.name AS job_category_name,
+             st.name AS default_shift_name,
              m.name AS manager_name
       FROM users u
       LEFT JOIN branches b ON b.id = u.branch_id
+      LEFT JOIN job_categories jc ON jc.id = u.job_category_id
       LEFT JOIN shift_templates st ON st.id = u.default_shift_id
       LEFT JOIN users m ON m.id = u.manager_id
       WHERE u.org_id = $1
@@ -1633,7 +1635,7 @@ app.get('/api/salary-slip', auth(), async (req, res) => {
     // Get leaves
     const { rows: lvs } = await db(`
       SELECT * FROM leaves
-      WHERE employee_id=$1 AND from_date::text BETWEEN $2 AND $3
+      WHERE employee_id=$1 AND from_date BETWEEN $2::date AND $3::date
       AND status='approved'
     `, [empId, from, to]);
 
