@@ -137,7 +137,7 @@ app.post('/api/auth/login', async (req, res) => {
              jc.cl_per_month, jc.sl_per_month, jc.sunday_off
        FROM users u
        LEFT JOIN organizations o ON o.id = u.org_id
-      LEFT JOIN branches b ON b.id = u.branch_id
+       LEFT JOIN branches b ON b.id = u.branch_id
        LEFT JOIN job_categories jc ON jc.id = u.job_category_id
        WHERE u.phone = $1 AND u.is_active = true`,
       [phone]
@@ -809,21 +809,41 @@ app.post('/api/attendance/checkout', auth(['employee','branch_admin']), async (r
       const over=nowMins2>endMins?nowMins2-endMins:0;
       if(over>240){checkoutTime=String(rec.shift_end).slice(0,5);capped=true;}
     }
-    const workedMins=Math.max(0,toMins(checkoutTime)-toMins(String(rec.check_in_time||"").slice(0,5)));
-    // Detect early checkout
-    let isEarly=false, earlyMins=0;
-    if(rec.shift_end) {
+    const cinMinsVal = toMins(String(rec.check_in_time||"").slice(0,5));
+    const coMinsVal = toMins(checkoutTime);
+    const workedMins = Math.max(0, coMinsVal - cinMinsVal);
+    // Detect early checkout vs half day
+    let isEarly=false, earlyMins=0, autoHalfDay=false;
+    if(rec.shift_end && rec.shift_start) {
+      const shiftStartM = toMins(String(rec.shift_start).slice(0,5));
       const shiftEndM = toMins(String(rec.shift_end).slice(0,5));
-      const coMins = toMins(checkoutTime);
-      if(coMins < shiftEndM) { isEarly=true; earlyMins=shiftEndM-coMins; }
+      const shiftDurMins = shiftEndM - shiftStartM;
+      // Get half day threshold from org settings
+      const { rows: settHd } = await db('SELECT half_day_threshold_hrs FROM org_settings WHERE org_id=$1', [oid]).catch(()=>({rows:[{}]}));
+      const halfDayThresholdMins = Number(settHd[0]?.half_day_threshold_hrs || 4.5) * 60;
+      if(coMinsVal < shiftEndM) {
+        // Check if worked less than threshold = auto half day
+        if(workedMins < halfDayThresholdMins) {
+          autoHalfDay = true; isEarly = false; earlyMins = 0;
+        } else {
+          isEarly = true; earlyMins = shiftEndM - coMinsVal;
+        }
+      }
+    }
+    // If auto half day, insert leave record
+    if(autoHalfDay) {
+      await db(`INSERT INTO leaves (org_id,employee_id,type,from_date,to_date,reason,status,approved_by)
+        VALUES ($1,$2,'half_day',$3,$3,'Auto-detected: checked out before half-day threshold','approved',$4)
+        ON CONFLICT DO NOTHING`,
+        [oid, rec.employee_id, date, req.user?.id || rec.employee_id]).catch(()=>{});
     }
     await db(
       `UPDATE attendance_records SET check_out_time=$1,worked_mins=$2,
        checkout_type='manual', is_auto_checkout=false,
        is_early_checkout=$3, early_mins=$4,
-       notes=CASE WHEN $5 THEN 'Auto-capped: checked out 4h+ after shift end' ELSE notes END
-       WHERE id=$6`,
-      [checkoutTime,workedMins,isEarly,earlyMins,capped,rec.id]
+       notes=CASE WHEN $5 THEN 'Auto-capped: checked out 4h+ after shift end' ELSE CASE WHEN $6 THEN 'Auto half day: checked out before threshold' ELSE notes END END
+       WHERE id=$7`,
+      [checkoutTime, workedMins, isEarly, earlyMins, capped, autoHalfDay, rec.id]
     );
     res.json({ok:true,worked_mins:workedMins,slot:rec.slot||1,capped,is_early:isEarly,early_mins:earlyMins,
       message:capped?`Checkout capped at shift end (${checkoutTime})`:isEarly?`Early checkout — ${earlyMins} mins before shift end`:null});
@@ -836,9 +856,18 @@ app.post('/api/attendance/admin-mark', auth(['super_admin', 'org_admin', 'branch
     const oid = orgId(req);
     const { employee_id, date, check_in_time, check_out_time, notes, clear } = req.body;
 
-    // Clear attendance
+    // Clear attendance (mark absent)
     if (clear === true) {
+      if (!notes || !notes.trim()) return res.status(400).json({ error: 'Reason is required to mark absent' });
       await db('DELETE FROM attendance_records WHERE employee_id=$1 AND date::text=$2', [employee_id, date]);
+      // Notify employee
+      const { rows: empInfo } = await db('SELECT org_id FROM users WHERE id=$1', [employee_id]);
+      if(empInfo[0]) {
+        await createNotification(employee_id, empInfo[0].org_id,
+          '📋 Attendance corrected',
+          `Your attendance on ${date} was marked as absent by admin. Reason: ${notes}`,
+          'approval_decision', null).catch(()=>{});
+      }
       return res.json({ ok: true, cleared: true });
     }
 
@@ -1554,6 +1583,143 @@ app.delete('/api/salary-adjustments/:id', auth(['super_admin','org_admin']), asy
   try {
     await db('DELETE FROM salary_adjustments WHERE id=$1', [req.params.id]);
     res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+
+// ============================================================
+// SALARY SLIP (PDF data)
+// ============================================================
+app.get('/api/salary-slip', auth(), async (req, res) => {
+  try {
+    const { year, month, employee_id } = req.query;
+    const y = parseInt(year || new Date().getFullYear());
+    const m = parseInt(month || (new Date().getMonth()+1));
+    const empId = employee_id || req.user.id;
+
+    // Permission check
+    if(empId !== req.user.id && !['super_admin','org_admin','branch_admin'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    const from = `${y}-${String(m).padStart(2,'0')}-01`;
+    const to = new Date(y,m,0).toISOString().split('T')[0];
+
+    // Get employee details
+    const { rows: empRows } = await db(`
+      SELECT u.*, b.name AS branch_name, o.name AS org_name,
+             jc.name AS job_category_name, jc.working_days_type AS cat_working_days,
+             jc.cl_per_month, jc.sl_per_month, jc.sunday_off
+      FROM users u
+      LEFT JOIN branches b ON b.id=u.branch_id
+      LEFT JOIN organizations o ON o.id=u.org_id
+      LEFT JOIN job_categories jc ON jc.id=u.job_category_id
+      WHERE u.id=$1
+    `, [empId]);
+    if(!empRows[0]) return res.status(404).json({ error: 'Employee not found' });
+    const emp = empRows[0];
+
+    // Get org settings
+    const { rows: settRows } = await db('SELECT * FROM org_settings WHERE org_id=$1', [emp.org_id]);
+    const s = settRows[0] || {};
+
+    // Get attendance
+    const { rows: att } = await db(`
+      SELECT * FROM attendance_records
+      WHERE employee_id=$1 AND date::text BETWEEN $2 AND $3
+      ORDER BY date
+    `, [empId, from, to]);
+
+    // Get leaves
+    const { rows: lvs } = await db(`
+      SELECT * FROM leaves
+      WHERE employee_id=$1 AND from_date::text BETWEEN $2 AND $3
+      AND status='approved'
+    `, [empId, from, to]);
+
+    // Get advances
+    const { rows: advRows } = await db(`
+      SELECT COALESCE(SUM(monthly_recovery),0) AS monthly_deduction
+      FROM salary_advances WHERE employee_id=$1 AND status='recovering'
+    `, [empId]);
+
+    // Get adjustments
+    const { rows: adjRows } = await db(`
+      SELECT * FROM salary_adjustments
+      WHERE employee_id=$1 AND year=$2 AND month=$3
+      ORDER BY created_at
+    `, [empId, y, m]);
+
+    // Calculate
+    const cat = emp;
+    const salary = Number(emp.salary || 0);
+    const divisor = Number(cat.cat_working_days || s.working_days || 30);
+    const dailyRate = salary / divisor;
+    const hourlyRate = dailyRate / 8;
+
+    const presentDays = att.filter(a=>a.check_in_time).length;
+    const absentDays = divisor - presentDays;
+    const lateDays = att.filter(a=>a.is_late).length;
+    const halfDays = lvs.filter(l=>l.type==='half_day').length;
+    const clUsed = lvs.filter(l=>l.type==='casual').length;
+    const slUsed = lvs.filter(l=>l.type==='sick').length;
+    const unauthLeaves = lvs.filter(l=>l.type==='unauthorized').length;
+    const earlyCheckouts = att.filter(a=>a.is_early_checkout&&!a.early_penalty_waived);
+    const earlyMinsTotal = earlyCheckouts.reduce((s,a)=>s+Number(a.early_mins||0),0);
+
+    const clAllowed = Number(cat.cl_per_month||0);
+    const slAllowed = Number(cat.sl_per_month||0);
+    const clExcess = Math.max(0, clUsed-clAllowed);
+    const slExcess = Math.max(0, slUsed-slAllowed);
+
+    const earnedGross = presentDays * dailyRate;
+
+    const monthlyGraceDays = s.monthly_grace_days || 3;
+    const normalLates = Math.min(lateDays, monthlyGraceDays);
+    const excessLates = Math.max(0, lateDays-monthlyGraceDays);
+    const chronicThreshold = s.chronic_late_threshold || 6;
+    const lateDeduction = normalLates*(s.late_deduction_per_occ||50) +
+      excessLates*(s.excess_late_deduction||100) +
+      (lateDays>=chronicThreshold?excessLates*(s.chronic_late_deduction||200):0);
+
+    const halfDayDeduction = halfDays * (dailyRate/2);
+    const leaveDeduction = (unauthLeaves+clExcess+slExcess)*dailyRate;
+    const earlyDeduction = earlyCheckouts.length*(s.early_checkout_flat_penalty||50) +
+      Math.round((earlyMinsTotal/60)*hourlyRate);
+    const advanceDeduction = Number(advRows[0]?.monthly_deduction||0);
+
+    const adjBonus = adjRows.filter(a=>a.type==='bonus').reduce((s,a)=>s+Number(a.amount),0);
+    const adjDeduction = adjRows.filter(a=>a.type!=='bonus').reduce((s,a)=>s+Number(a.amount),0);
+
+    const totalDeductions = lateDeduction+halfDayDeduction+leaveDeduction+earlyDeduction+advanceDeduction+adjDeduction;
+    const netEarned = Math.max(0, earnedGross-totalDeductions)+adjBonus;
+
+    res.json({
+      employee: {
+        name: emp.name, designation: emp.designation,
+        employee_code: emp.employee_code, branch_name: emp.branch_name,
+        org_name: emp.org_name, date_of_joining: emp.date_of_joining,
+        job_category: emp.job_category_name,
+      },
+      period: { year: y, month: m, from, to, divisor },
+      attendance: { presentDays, absentDays, lateDays, halfDays, totalDays: divisor },
+      leaves: { clUsed, clAllowed, clExcess, slUsed, slAllowed, slExcess, unauthLeaves },
+      earnings: { salary, dailyRate: Math.round(dailyRate*100)/100, earnedGross: Math.round(earnedGross*100)/100 },
+      deductions: {
+        lateDeduction: Math.round(lateDeduction*100)/100,
+        normalLates, excessLates, monthlyGraceDays,
+        halfDayDeduction: Math.round(halfDayDeduction*100)/100,
+        leaveDeduction: Math.round(leaveDeduction*100)/100,
+        earlyDeduction: Math.round(earlyDeduction*100)/100,
+        earlyCheckouts: earlyCheckouts.length,
+        advanceDeduction: Math.round(advanceDeduction*100)/100,
+        adjDeduction: Math.round(adjDeduction*100)/100,
+        adjBonus: Math.round(adjBonus*100)/100,
+        adjustments: adjRows,
+        totalDeductions: Math.round(totalDeductions*100)/100,
+      },
+      netEarned: Math.round(netEarned*100)/100,
+    });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
