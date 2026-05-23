@@ -699,6 +699,7 @@ function AdminApp({user, notify, page, setPage, activeOrgId, setActiveOrgId, onL
     ...(isSA||isOA?[{k:"adm_advances",i:"💳",l:"Advances"}]:[]),
     {k:"adm_calendar",i:"🗓",l:"Calendar"},
     {k:"adm_hierarchy",i:"🏛",l:"Hierarchy"},
+    ...(isSA||isOA?[{k:"adm_sal_adj",i:"⚖️",l:"Adj."}]:[]),
     ...(isSA||isOA?[
       {k:"adm_kpi_templates",i:"📊",l:"KPIs"},
       {k:"adm_kpi_review",i:"✅",l:"KPI Review"},
@@ -894,8 +895,8 @@ function AdminHome({user, notify, activeOrgId}) {
         GET("/api/approvals",{org_id:activeOrgId}),
       ]);
       const checkedIn=[...new Set((att||[]).filter(r=>r.check_in_time).map(r=>r.employee_id))].length;
-      setStats({checkedIn, total:(emps||[]).filter(e=>e.role==="employee"&&e.status==="active").length, pendingApprovals:(appr||[]).length});
-      setEmployees((emps||[]).filter(e=>e.role==="employee"&&e.status==="active"));
+      setStats({checkedIn, total:(emps||[]).filter(e=>(e.role==="employee"||e.role==="branch_admin")&&e.status==="active").length, pendingApprovals:(appr||[]).length});
+      setEmployees((emps||[]).filter(e=>(e.role==="employee"||e.role==="branch_admin")&&e.status==="active"));
     } catch(e){notify(e.message,"error");}
     finally{setLoading(false);}
   };
@@ -939,7 +940,7 @@ function LeaveForm({employees, onSubmit}) {
         <option value="">Select employee</option>{employees.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}
       </select>
       <select style={S.select} value={type} onChange={e=>setType(e.target.value)}>
-        <option value="casual">Casual leave</option><option value="unauthorized">Unauthorized leave</option><option value="noshow">No show</option>
+        <option value="casual">Casual leave</option><option value="half_day">Half Day</option><option value="unauthorized">Unauthorized leave</option><option value="noshow">No show</option>
       </select>
       <input style={S.input} type="date" value={dt} onChange={e=>setDt(e.target.value)}/>
       <input style={S.input} placeholder="Reason (optional)" value={reason} onChange={e=>setReason(e.target.value)}/>
@@ -1144,7 +1145,7 @@ function AdminShifts({user, notify, activeOrgId}) {
   const canEdit=["super_admin","org_admin","branch_admin"].includes(user.role);
 
   const load=async()=>{
-    try{const[s,e]=await Promise.all([GET("/api/shifts",{org_id:activeOrgId}),GET("/api/employees",{org_id:activeOrgId})]);setShifts(s||[]);setEmployees((e||[]).filter(x=>x.role==="employee"&&x.status==="active"));}
+    try{const[s,e]=await Promise.all([GET("/api/shifts",{org_id:activeOrgId}),GET("/api/employees",{org_id:activeOrgId})]);setShifts(s||[]);setEmployees((e||[]).filter(x=>(x.role==="employee"||x.role==="branch_admin")&&x.status==="active"));}
     catch(e){notify(e.message,"error");}finally{setLoading(false);}
   };
   useEffect(()=>{if(activeOrgId)load();},[activeOrgId]);
@@ -1243,7 +1244,7 @@ function AdminOverride({user, notify, activeOrgId}) {
 
   const load=async()=>{
     try{const[e,s,r]=await Promise.all([GET("/api/employees",{org_id:activeOrgId}),GET("/api/shifts",{org_id:activeOrgId}),GET("/api/shift-requests",{org_id:activeOrgId})]);
-    let emps=(e||[]).filter(x=>x.role==="employee"&&x.status==="active");
+    let emps=(e||[]).filter(x=>(x.role==="employee"||x.role==="branch_admin")&&x.status==="active");
     if(user.role==="branch_admin")emps=emps.filter(x=>x.branch_id===user.branch_id);
     setEmployees(emps);setShifts(s||[]);setRequests((r||[]).filter(x=>x.status==="pending"));}
     catch(e){notify(e.message,"error");}finally{setLoading(false);}
@@ -1529,6 +1530,8 @@ function AdminSettings({user, notify, activeOrgId}) {
 
   if(loading||!settings) return <Spinner/>;
   const fields=[["grace_period_mins","Grace period (mins)"],["late_deduction_per_occ","Late deduction (₹)"],["max_allowed_lates_per_month","Max lates/month"],["excess_late_penalty","Excess late penalty (₹)"],["unauth_leave_penalty","Unauth leave penalty (₹)"],["no_show_penalty","No-show penalty (₹)"],["casual_leave_per_month","Casual leave/month"],["working_days_per_month","Working days/month"],["geo_fence_radius_meters","Geo-fence radius (m)"]];
+  <><label style={S.label}>Early checkout flat penalty (₹)</label><input style={S.input} type="number" value={settings.early_checkout_flat_penalty || 50}
+    onChange={e => setSettings(s => ({ ...s, early_checkout_flat_penalty: e.target.value }))} /><p style={{ color: C.gr500, fontSize: 12, marginBottom: 10 }}>Fixed penalty per early checkout + proportional hourly deduction auto-calculated from salary</p></>
   return(
     <div style={{padding:20}}>
       <h2 style={{color:C.g800,fontSize:22,fontWeight:800,marginBottom:16}}>Settings</h2>
@@ -1756,7 +1759,7 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
     return days;
   };
 
-  let filteredEmps = employees.filter(e => e.role === "employee");
+  let filteredEmps = employees.filter(e => e.role === "employee" || e.role === "branch_admin");
   if (user.role === "branch_admin") filteredEmps = filteredEmps.filter(e => e.branch_id === user.branch_id);
   if (selBranch !== "all") filteredEmps = filteredEmps.filter(e => e.branch_id === selBranch);
 
@@ -1984,6 +1987,7 @@ function AdminLeaveHistory({ user, notify, activeOrgId }) {
 
   const TYPE_CONFIG = {
     casual:       { label: "Casual Leave",       color: "#3b82f6", bg: "#eff6ff" },
+    half_day:     { label: "Half Day", color: "#7c3aed", bg: "#ede9fe" },
     unauthorized: { label: "Unauthorized Leave", color: "#dc2626", bg: "#fee2e2" },
     noshow:       { label: "No Show",            color: "#ea580c", bg: "#ffedd5" },
     sick:         { label: "Sick Leave",         color: "#7c3aed", bg: "#ede9fe" },
@@ -2065,7 +2069,7 @@ function AdminLeaveHistory({ user, notify, activeOrgId }) {
           <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
             <select style={{ background: "#f0faf4", border: "1.5px solid #86efac", borderRadius: 12, color: "#111827", padding: "10px 12px", fontSize: 12, outline: "none", flex: 1 }} value={selEmp} onChange={e => setSelEmp(e.target.value)}>
               <option value="all">All employees</option>
-              {employees.filter(e => e.role === "employee").map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+              {employees.filter(e => e.role === "employee" || e.role === "branch_admin").map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
             </select>
             <select style={{ background: "#f0faf4", border: "1.5px solid #86efac", borderRadius: 12, color: "#111827", padding: "10px 12px", fontSize: 12, outline: "none", flex: 1 }} value={selType} onChange={e => setSelType(e.target.value)}>
               <option value="all">All types</option>
@@ -2200,7 +2204,7 @@ function AdminDailyBoard({ notify, activeOrgId }) {
         GET("/api/leaves", { from: date, to: date, org_id: activeOrgId }),
         GET("/api/branches", { org_id: activeOrgId }),
       ]);
-      setEmployees((e || []).filter(x => x.role === "employee" && x.status === "active"));
+      setEmployees((e || []).filter(x => (x.role === "employee" || x.role === "branch_admin") && x.status === "active"));
       setRecords(r || []);
       setLeaves(lv || []);
       setBranches(b || []);
@@ -2501,7 +2505,7 @@ function AdminAdvances({ user, notify, activeOrgId }) {
         GET("/api/employees", { org_id: activeOrgId }),
       ]);
       setAdvances(adv || []);
-      setEmployees((emps || []).filter(e => e.role === "employee"));
+      setEmployees((emps || []).filter(e => e.role === "employee" || e.role === "branch_admin"));
     } catch (e) { notify(e.message, "error"); }
     finally { setLoading(false); }
   };
@@ -2748,7 +2752,7 @@ function AttendanceCalendar({ user, notify, isAdmin, activeOrgId }) {
   useEffect(() => {
     if (isAdmin) {
       GET("/api/employees", { org_id: activeOrgId || user.org_id })
-        .then(e => setEmployees((e || []).filter(x => x.role === "employee")))
+        .then(e => setEmployees((e || []).filter(x => x.role === "employee" || x.role === "branch_admin")))
         .catch(() => {});
     }
   }, [activeOrgId]);
@@ -4122,6 +4126,93 @@ function TaskManager({user, notify, activeOrgId, isAdminView}) {
   );
 }
 
+
+
+// ── SALARY ADJUSTMENT MANAGER ─────────────────────────────────
+function SalaryAdjustmentManager({notify, activeOrgId}) {
+  const [employees, setEmployees] = useState([]);
+  const [selEmp, setSelEmp] = useState("");
+  const now = new Date();
+  const [selMonth, setSelMonth] = useState(now.getFullYear()+"-"+pad(now.getMonth()+1));
+  const [adjustments, setAdjustments] = useState([]);
+  const [form, setForm] = useState({amount:"", type:"deduction", reason:""});
+  const fv=(k,v)=>setForm(p=>({...p,[k]:v}));
+
+  useEffect(()=>{
+    if(activeOrgId) GET("/api/employees",{org_id:activeOrgId}).then(e=>setEmployees(e||[])).catch(()=>{});
+  },[activeOrgId]);
+
+  const load=async()=>{
+    if(!selEmp) return;
+    const [y,m]=selMonth.split("-").map(Number);
+    GET("/api/salary-adjustments",{employee_id:selEmp,year:y,month:m,org_id:activeOrgId})
+      .then(r=>setAdjustments(r||[])).catch(()=>{});
+  };
+  useEffect(()=>{load();},[selEmp,selMonth]);
+
+  const save=async()=>{
+    if(!selEmp){notify("Select employee","error");return;}
+    if(!form.amount||!form.reason){notify("Amount and reason required","error");return;}
+    const [y,m]=selMonth.split("-").map(Number);
+    try{
+      await POST("/api/salary-adjustments",{employee_id:selEmp,amount:Number(form.amount),type:form.type,reason:form.reason,year:y,month:m,org_id:activeOrgId});
+      notify("Adjustment saved ✓");
+      setForm({amount:"",type:"deduction",reason:""});
+      load();
+    }catch(e){notify(e.message,"error");}
+  };
+
+  const del=async(id)=>{
+    if(!window.confirm("Delete this adjustment?")) return;
+    try{await DEL("/api/salary-adjustments/"+id);notify("Deleted");load();}
+    catch(e){notify(e.message,"error");}
+  };
+
+  const netAdj=adjustments.reduce((s,a)=>s+(a.type==="bonus"?Number(a.amount):-Number(a.amount)),0);
+
+  return(
+    <div style={{padding:20}}>
+      <h2 style={{color:C.g800,fontSize:22,fontWeight:800,marginBottom:4}}>Salary Adjustments</h2>
+      <p style={{color:C.gr500,fontSize:13,marginBottom:16}}>Add bonus, deduction or correction to monthly salary</p>
+      <select style={{...S.select,marginBottom:10}} value={selEmp} onChange={e=>setSelEmp(e.target.value)}>
+        <option value="">Select employee</option>
+        {(employees||[]).map(e=><option key={e.id} value={e.id}>{e.name} — {e.branch_name||""}</option>)}
+      </select>
+      <input style={{...S.input,marginBottom:16}} type="month" value={selMonth} onChange={e=>setSelMonth(e.target.value)}/>
+      {adjustments.length>0&&(
+        <div style={{background:netAdj>=0?C.g50:"#fee2e2",borderRadius:14,padding:14,marginBottom:16,border:`1px solid ${netAdj>=0?C.g300:"#fca5a5"}`}}>
+          <p style={{color:netAdj>=0?C.g700:C.red,fontWeight:800,fontSize:15}}>Net: {netAdj>=0?"+":""}{fmt(netAdj)}</p>
+        </div>
+      )}
+      <div style={{background:C.white,borderRadius:16,padding:16,marginBottom:16,boxShadow:`0 2px 8px ${C.g300}33`}}>
+        <p style={{color:C.g800,fontWeight:800,marginBottom:12}}>Add adjustment</p>
+        <select style={{...S.select,marginBottom:10}} value={form.type} onChange={e=>fv("type",e.target.value)}>
+          <option value="deduction">Deduction (reduces salary)</option>
+          <option value="bonus">Bonus (adds to salary)</option>
+          <option value="correction">Correction</option>
+        </select>
+        <input style={{...S.input,marginBottom:10}} type="number" placeholder="Amount (₹)" value={form.amount} onChange={e=>fv("amount",e.target.value)}/>
+        <input style={{...S.input,marginBottom:10}} placeholder="Reason (required)" value={form.reason} onChange={e=>fv("reason",e.target.value)}/>
+        <button style={S.btn} onClick={save}>Save adjustment</button>
+      </div>
+      {adjustments.map(a=>(
+        <div key={a.id} style={{background:C.white,borderRadius:14,padding:14,marginBottom:10,borderLeft:`4px solid ${a.type==="bonus"?C.g600:C.red}`}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+            <div>
+              <p style={{color:a.type==="bonus"?C.g700:C.red,fontWeight:800,fontSize:15}}>
+                {a.type==="bonus"?"+":"-"}{fmt(a.amount)} — {a.type==="bonus"?"Bonus":a.type==="deduction"?"Deduction":"Correction"}
+              </p>
+              <p style={{color:C.gr500,fontSize:13}}>{a.reason}</p>
+              <p style={{color:C.gr400,fontSize:11}}>by {a.created_by_name} · {new Date(a.created_at).toLocaleDateString("en-IN",{day:"numeric",month:"short"})}</p>
+            </div>
+            <button onClick={()=>del(a.id)} style={{background:"#fff",border:`1px solid ${C.red}`,borderRadius:8,padding:"5px 10px",cursor:"pointer",color:C.red,fontSize:12}}>🗑</button>
+          </div>
+        </div>
+      ))}
+      {adjustments.length===0&&selEmp&&<p style={{color:C.gr500,textAlign:"center",padding:20}}>No adjustments this month</p>}
+    </div>
+  );
+}
 
 // ── STYLES ─────────────────────────────────────────────────────────────────
 const S = {

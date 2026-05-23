@@ -132,7 +132,9 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(400).json({ error: 'Phone and password required' });
 
     const { rows } = await db(
-      `SELECT u.*, o.name AS org_name, o.code AS org_code, b.name AS branch_name
+      `SELECT u.*, o.name AS org_name, o.code AS org_code, b.name AS branch_name,
+             jc.name AS job_category_name, jc.working_days_type AS cat_working_days,
+             jc.cl_per_month, jc.sl_per_month, jc.sunday_off
        FROM users u
        LEFT JOIN organizations o ON o.id = u.org_id
        LEFT JOIN branches b ON b.id = u.branch_id
@@ -1148,7 +1150,7 @@ app.get('/api/salary-report', auth(['super_admin', 'org_admin', 'branch_admin'])
       db(`SELECT u.id, u.name, u.designation, u.salary, u.status,
                b.name AS branch_name, b.id AS branch_id
           FROM users u LEFT JOIN branches b ON b.id=u.branch_id
-          WHERE u.org_id=$1 AND u.role='employee' AND u.is_active=true
+          WHERE u.org_id=$1 AND u.role IN ('employee','branch_admin') AND u.is_active=true
           ${req.user.role === 'branch_admin' ? "AND u.branch_id='" + req.user.branch_id + "'" : ''}
           ORDER BY u.name`, [oid]),
       db('SELECT * FROM org_settings WHERE org_id=$1', [oid]),
@@ -1400,11 +1402,11 @@ app.get('/api/devices', auth(['super_admin','org_admin']), async (req, res) => {
   try {
     const oid = req.query.org_id || orgId(req);
     const { rows } = await db(`
-      SELECT u.id, u.name, u.phone, u.designation, b.name AS branch_name,
-             u.registered_device_fp, u.registered_device_at
+      SELECT u.*, b.name AS branch_name, jc.name AS job_category_name
       FROM users u
       LEFT JOIN branches b ON b.id = u.branch_id
-      WHERE u.org_id=$1 AND u.is_active=true AND u.role NOT IN ('super_admin','org_admin')
+      LEFT JOIN job_categories jc ON jc.id = u.job_category_id
+      WHERE u.org_id = $1 AND u.is_active=true AND u.role NOT IN ('super_admin','org_admin')
       ORDER BY u.name
     `, [oid]);
     res.json(rows);
@@ -1481,7 +1483,7 @@ app.post('/api/job-categories', auth(['super_admin','org_admin']), async (req, r
     const { rows } = await db(
       `INSERT INTO job_categories (org_id,name,working_days_type,sunday_off,cl_per_month,sl_per_month,paid_off_days,description)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-      [oid, name, working_days_type||26, hasSundayOff, cl_per_month||0, sl_per_month||0, paid_off_days||0, description||null]);
+      [oid, name, parseInt(working_days_type)||26, hasSundayOff, parseInt(cl_per_month)||0, parseInt(sl_per_month)||0, parseInt(paid_off_days)||0, description||null]);
     res.json(rows[0]);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -1495,9 +1497,9 @@ app.patch('/api/job-categories/:id', auth(['super_admin','org_admin']), async (r
     await db(
       `UPDATE job_categories SET name=$1,working_days_type=$2,sunday_off=$3,cl_per_month=$4,
        sl_per_month=$5,paid_off_days=$6,description=$7,is_active=$8 WHERE id=$9`,
-      [name??c.name, working_days_type??c.working_days_type, sunday_off??c.sunday_off,
-       cl_per_month??c.cl_per_month, sl_per_month??c.sl_per_month,
-       paid_off_days??c.paid_off_days, description??c.description,
+      [name??c.name, parseInt(working_days_type??c.working_days_type)||26, sunday_off??c.sunday_off,
+       parseInt(cl_per_month??c.cl_per_month)||0, parseInt(sl_per_month??c.sl_per_month)||0,
+       parseInt(paid_off_days??c.paid_off_days)||0, description??c.description,
        is_active??c.is_active, req.params.id]);
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -1506,6 +1508,50 @@ app.patch('/api/job-categories/:id', auth(['super_admin','org_admin']), async (r
 app.delete('/api/job-categories/:id', auth(['super_admin','org_admin']), async (req, res) => {
   try {
     await db('UPDATE job_categories SET is_active=false WHERE id=$1', [req.params.id]);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+
+// ============================================================
+// SALARY ADJUSTMENTS
+// ============================================================
+
+app.get('/api/salary-adjustments', auth(['super_admin','org_admin','branch_admin']), async (req, res) => {
+  try {
+    const oid = req.query.org_id || orgId(req);
+    const { employee_id, year, month } = req.query;
+    const params = [oid];
+    let sql = `SELECT sa.*, u.name AS employee_name, cb.name AS created_by_name
+      FROM salary_adjustments sa
+      JOIN users u ON u.id = sa.employee_id
+      LEFT JOIN users cb ON cb.id = sa.created_by
+      WHERE sa.org_id=$1`;
+    if(employee_id) { params.push(employee_id); sql += ` AND sa.employee_id=$${params.length}`; }
+    if(year) { params.push(parseInt(year)); sql += ` AND sa.year=$${params.length}`; }
+    if(month) { params.push(parseInt(month)); sql += ` AND sa.month=$${params.length}`; }
+    sql += ' ORDER BY sa.created_at DESC LIMIT 100';
+    const { rows } = await db(sql, params);
+    res.json(rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/salary-adjustments', auth(['super_admin','org_admin']), async (req, res) => {
+  try {
+    const oid = orgId(req);
+    const { employee_id, amount, type, reason, year, month } = req.body;
+    if(!reason?.trim()) return res.status(400).json({ error: 'Reason is required' });
+    const { rows } = await db(`
+      INSERT INTO salary_adjustments (org_id,employee_id,amount,type,reason,year,month,created_by)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *
+    `, [oid, employee_id, Number(amount), type||'deduction', reason, parseInt(year), parseInt(month), req.user.id]);
+    res.json(rows[0]);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/salary-adjustments/:id', auth(['super_admin','org_admin']), async (req, res) => {
+  try {
+    await db('DELETE FROM salary_adjustments WHERE id=$1', [req.params.id]);
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -1821,6 +1867,59 @@ app.delete('/api/tasks/:id', auth(['super_admin','org_admin']), async (req, res)
   try {
     await db('DELETE FROM tasks WHERE id=$1', [req.params.id]);
     res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Shift reminder — call this from a cron job 15 mins before shift start
+app.post('/api/cron/shift-reminders', async (req, res) => {
+  if (req.headers['x-cron-secret'] !== process.env.CRON_SECRET) return res.status(401).end();
+  try {
+    const { date, time } = nowIST();
+    // Find employees whose shift starts in next 15 mins and haven't checked in
+    const { rows } = await db(`
+      SELECT DISTINCT u.id, u.org_id, st.start_time, st.name AS shift_name
+      FROM users u
+      JOIN shift_templates st ON st.id = COALESCE(
+        (SELECT shift_id FROM shift_schedules WHERE employee_id=u.id AND date::text=$1 LIMIT 1),
+        u.default_shift_id,
+        (SELECT default_shift_id FROM org_settings WHERE org_id=u.org_id)
+      )
+      LEFT JOIN attendance_records ar ON ar.employee_id=u.id AND ar.date::text=$1
+      WHERE u.is_active=true AND u.role IN ('employee','branch_admin')
+        AND ar.id IS NULL
+        AND (toMins(st.start_time::text) - toMins($2)) BETWEEN 10 AND 20
+    `, [date, time]);
+    for (const emp of rows) {
+      await createNotification(emp.id, emp.org_id,
+        `⏰ Shift starting soon`,
+        `Your ${emp.shift_name} shift starts in 15 minutes`,
+        'shift_reminder', null);
+    }
+    res.json({ ok: true, reminded: rows.length });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Checkout reminder — 30 mins before shift end
+app.post('/api/cron/checkout-reminders', async (req, res) => {
+  if (req.headers['x-cron-secret'] !== process.env.CRON_SECRET) return res.status(401).end();
+  try {
+    const { date, time } = nowIST();
+    const { rows } = await db(`
+      SELECT DISTINCT u.id, u.org_id, st.end_time, st.name AS shift_name
+      FROM users u
+      JOIN attendance_records ar ON ar.employee_id=u.id AND ar.date::text=$1
+        AND ar.check_in_time IS NOT NULL AND ar.check_out_time IS NULL
+      JOIN shift_templates st ON st.id = ar.shift_id
+      WHERE u.is_active=true
+        AND (toMins(st.end_time::text) - toMins($2)) BETWEEN 25 AND 35
+    `, [date, time]);
+    for (const emp of rows) {
+      await createNotification(emp.id, emp.org_id,
+        `🔔 Shift ending soon`,
+        `Your ${emp.shift_name} shift ends in 30 minutes — don't forget to check out`,
+        'checkout_reminder', null);
+    }
+    res.json({ ok: true, reminded: rows.length });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 

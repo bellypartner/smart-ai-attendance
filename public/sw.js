@@ -23,6 +23,7 @@ self.addEventListener('push', e => {
     body: data.body || '',
     icon: '/icon-192.png',
     badge: '/badge-72.png',
+    vibrate: [200, 100, 200],
     tag: data.tag || 'smartai',
     data: { url: data.url || '/' },
     requireInteraction: data.urgent || false,
