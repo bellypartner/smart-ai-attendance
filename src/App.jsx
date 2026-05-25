@@ -226,11 +226,7 @@ export default function App() {
     localStorage.setItem("saa_user", JSON.stringify(u));
     setUser(u);
     setActiveOrgId(u.org_id);
-    if(u.role==="super_admin") {
-      const savedOrg = localStorage.getItem("saa_default_org");
-      if(savedOrg) { setActiveOrgId(savedOrg); setPage("adm_home"); }
-      else setPage("sa_orgs");
-    }
+    if(u.role==="super_admin"){const savedOrg=localStorage.getItem("saa_default_org");if(savedOrg){setActiveOrgId(savedOrg);setPage("adm_home");}else setPage("sa_orgs");}
     else if(u.role==="employee") setPage("home");
     else setPage("adm_home");
     // Register push notifications
@@ -603,97 +599,19 @@ function EmpSalary({user, notify}) {
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
   const now = new Date();
-  const [selMonth, setSelMonth] = useState(now.getFullYear()+"-"+pad(now.getMonth()+1));
-  const load = (sm) => {
+  const load = () => {
     setLoading(true);
-    const [y,m]=(sm||selMonth).split("-").map(Number);
-    GET("/api/my-salary",{year:y,month:m})
+    GET("/api/my-salary",{year:now.getFullYear(),month:now.getMonth()+1})
       .then(r=>setReport(r))
       .catch(e=>notify(e.message,"error"))
       .finally(()=>setLoading(false));
   };
-  useEffect(()=>{ load(); },[selMonth]);
+  useEffect(()=>{ load(); },[]);
   if(loading) return <Spinner/>;
-
-  // Salary Slip Preview Modal
-  if(slipPreview) {
-    const s=slipPreview;
-    const mn=["January","February","March","April","May","June","July","August","September","October","November","December"];
-    const f2=n=>"₹"+Number(n||0).toLocaleString("en-IN",{minimumFractionDigits:2});
-    return(
-      <div style={{padding:20}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
-          <button onClick={()=>setSlipPreview(null)} style={{background:C.g100,border:"none",borderRadius:10,padding:"8px 16px",cursor:"pointer",color:C.g700,fontWeight:700}}>← Back</button>
-          <button onClick={()=>{
-            const html="<html><head><title>Salary Slip</title><style>body{font-family:Arial;padding:20px;color:#111}h2{color:#166534}table{width:100%;border-collapse:collapse}td{padding:8px;border-bottom:1px solid #eee}td:last-child{text-align:right}.net{font-size:18px;font-weight:900;color:#166534}.footer{margin-top:30px;display:flex;justify-content:space-between}</style></head><body>"
-              +"<h2>"+s.employee.org_name+"</h2><h3>Salary Slip — "+mn[s.period.month-1]+" "+s.period.year+"</h3>"
-              +"<p><b>"+s.employee.name+"</b> | "+(s.employee.designation||"")+" | "+(s.employee.branch_name||"")+"</p>"
-              +"<p>Employee Code: "+(s.employee.employee_code||"—")+" | Category: "+(s.employee.job_category||"—")+"</p><hr/>"
-              +"<table><tr><td>Basic Salary</td><td>"+f2(s.earnings.salary)+"</td></tr>"
-              +"<tr><td>Days Present / Total</td><td>"+s.attendance.presentDays+" / "+s.period.divisor+"</td></tr>"
-              +"<tr><td>Half Days</td><td>"+s.attendance.halfDays+"</td></tr>"
-              +"<tr><td><b>Gross Earned</b></td><td><b>"+f2(s.earnings.earnedGross)+"</b></td></tr>"
-              +"<tr><td colspan='2' style='background:#f9fafb;font-weight:700;font-size:12px;letter-spacing:1px'>DEDUCTIONS</td></tr>"
-              +"<tr><td>Late penalty</td><td>-"+f2(s.deductions.lateDeduction)+"</td></tr>"
-              +"<tr><td>Half day deduction</td><td>-"+f2(s.deductions.halfDayDeduction)+"</td></tr>"
-              +"<tr><td>Leave deduction</td><td>-"+f2(s.deductions.leaveDeduction)+"</td></tr>"
-              +"<tr><td>Early checkout</td><td>-"+f2(s.deductions.earlyDeduction)+"</td></tr>"
-              +"<tr><td>Advance recovery</td><td>-"+f2(s.deductions.advanceDeduction)+"</td></tr>"
-              +(s.deductions.adjDeduction>0?"<tr><td>Manual deduction</td><td>-"+f2(s.deductions.adjDeduction)+"</td></tr>":"")
-              +(s.deductions.adjBonus>0?"<tr><td>Bonus</td><td>+"+f2(s.deductions.adjBonus)+"</td></tr>":"")
-              +"<tr><td colspan='2' style='height:8px'></td></tr>"
-              +"<tr class='net'><td><b>NET PAYABLE</b></td><td><b>"+f2(s.netEarned)+"</b></td></tr></table>"
-              +"<div class='footer'><div style='text-align:center;border-top:1px solid #000;padding-top:6px;width:180px'>Employee Signature</div>"
-              +"<div style='text-align:center;border-top:1px solid #000;padding-top:6px;width:180px'>Authorised Signatory</div></div>"
-              +"</body></html>";
-            const w=window.open("","_blank");
-            if(w){w.document.write(html);w.document.close();setTimeout(()=>w.print(),500);}
-          }} style={{background:"#7c3aed",border:"none",borderRadius:10,color:"#fff",padding:"8px 16px",cursor:"pointer",fontWeight:700}}>🖨 Print / Download PDF</button>
-        </div>
-        <div style={{background:C.white,borderRadius:20,padding:20,boxShadow:`0 2px 12px ${C.g300}44`}}>
-          <h2 style={{color:C.g800,textAlign:"center",fontWeight:900,fontSize:20}}>{s.employee.org_name}</h2>
-          <p style={{textAlign:"center",color:C.gr500,marginBottom:16}}>Salary Slip — {mn[s.period.month-1]} {s.period.year}</p>
-          <div style={{background:C.g50,borderRadius:14,padding:14,marginBottom:16,display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-            {[["Employee",s.employee.name],["Designation",s.employee.designation||"—"],["Branch",s.employee.branch_name||"—"],["Code",s.employee.employee_code||"—"],["Category",s.employee.job_category||"—"]].map(([l,v])=>(
-              <div key={l}><p style={{color:C.gr400,fontSize:11}}>{l}</p><p style={{color:C.g800,fontWeight:700,fontSize:13}}>{v}</p></div>
-            ))}
-          </div>
-          {[
-            ["Basic Salary",f2(s.earnings.salary),false],
-            ["Days Present",s.attendance.presentDays+"/"+s.period.divisor,false],
-            ["Half Days",s.attendance.halfDays,false],
-            ["Gross Earned",f2(s.earnings.earnedGross),false],
-            ["— Deductions —","",false],
-            ["Late Penalty","-"+f2(s.deductions.lateDeduction),true],
-            ["Half Day Deduction","-"+f2(s.deductions.halfDayDeduction),true],
-            ["Leave Deduction","-"+f2(s.deductions.leaveDeduction),true],
-            ["Early Checkout","-"+f2(s.deductions.earlyDeduction),true],
-            ["Advance Recovery","-"+f2(s.deductions.advanceDeduction),true],
-            ...(s.deductions.adjDeduction>0?[["Manual Deduction","-"+f2(s.deductions.adjDeduction),true]]:[]),
-            ...(s.deductions.adjBonus>0?[["Bonus","+"+f2(s.deductions.adjBonus),false]]:[]),
-          ].map(([l,v,isDeduct])=>(
-            <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${C.g50}`}}>
-              <p style={{color:l.includes("—")?C.g600:C.gr600,fontSize:13,fontWeight:l.includes("—")?"700":"400"}}>{l}</p>
-              <p style={{color:isDeduct?C.red:C.g800,fontSize:13,fontWeight:600}}>{v}</p>
-            </div>
-          ))}
-          <div style={{background:C.g700,borderRadius:12,padding:"14px 16px",marginTop:12,display:"flex",justifyContent:"space-between"}}>
-            <p style={{color:"#fff",fontWeight:800,fontSize:16}}>NET PAYABLE</p>
-            <p style={{color:"#fff",fontWeight:900,fontSize:20}}>{f2(s.netEarned)}</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   if(!report) return <Empty icon="💰" msg="No salary data yet"/>;
   return(
-    <>
-    <div style={{ padding: 20 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-        <h2 style={{ color: C.g800, fontSize: 22, fontWeight: 800 }}>Salary Dashboard</h2>
-        <input type="month" value={selMonth} onChange={e => setSelMonth(e.target.value)} style={{ border: `1px solid ${C.g300}`, borderRadius: 8, padding: "6px 10px", fontSize: 13, color: C.g700, background: "#fff" }} />
-      </div>
+    <><div style={{ padding: 20 }}>
+      <h2 style={{ color: C.g800, fontSize: 22, fontWeight: 800, marginBottom: 16 }}>Salary Dashboard</h2>
       <div style={{ background: `linear-gradient(135deg,${C.g800},${C.g600})`, borderRadius: 24, padding: 24, marginBottom: 20 }}>
         <p style={{ color: "rgba(255,255,255,0.65)", fontSize: 13 }}>{now.toLocaleDateString("en-IN", { month: "long", year: "numeric" })}</p>
         <p style={{ color: C.white, fontSize: 36, fontWeight: 900, margin: "6px 0 2px" }}>{fmt(report.netEarned || 0)}</p>
@@ -705,7 +623,7 @@ function EmpSalary({user, notify}) {
       {([
         ["Days Present", report.presentDays],
         ["Gross Earned", fmt(report.earnedGross || 0)],
-        ["Half Days", String(report.halfDays || 0)], ["Late Deductions", `-${fmt(report.lateDeductions || 0)}`],
+        ["Late Deductions", `-${fmt(report.lateDeductions || 0)}`],
         ["CL used/allowed", `${report.clUsed || 0}/${report.clAllowed || 0}`],
         ["SL used/allowed", `${report.slUsed || 0}/${report.slAllowed || 0}`],
         ["Leave Deductions", `-${fmt(report.leaveDeductions || 0)}`],
@@ -721,9 +639,8 @@ function EmpSalary({user, notify}) {
           <span style={{ color: C.gr900, fontWeight: 700, fontSize: 14 }}>{v}</span>
         </div>
       ))}
-    </div><SalarySlip user={user} notify={notify} />
-    </>
-  );
+    </div><SalarySlip user={user} notify={notify} /></>
+    );
 }
 
 function EmpProfile({user, notify}) {
@@ -807,6 +724,7 @@ function AdminApp({user, notify, page, setPage, activeOrgId, setActiveOrgId, onL
     adm_advances: <AdminAdvances user={user} notify={notify} activeOrgId={activeOrgId}/>,
     adm_calendar: <AttendanceCalendar user={user} notify={notify} isAdmin={true} activeOrgId={activeOrgId}/>,
     adm_hierarchy: <HierarchyTable user={user} notify={notify} activeOrgId={activeOrgId}/>,
+    adm_sal_adj: <SalaryAdjustmentManager notify={notify} activeOrgId={activeOrgId}/>,
     adm_kpi_templates: <KPITemplateManager notify={notify} activeOrgId={activeOrgId}/>,
     adm_kpi_review: <KPIReview notify={notify} activeOrgId={activeOrgId}/>,
     adm_kpi_scores: <KPIScores notify={notify} activeOrgId={activeOrgId} user={user}/>,
@@ -934,7 +852,7 @@ function SuperAdminOrgs({notify, setActiveOrgId, setPage, activeOrgId}) {
               </div>
               {isActive&&<span style={{background:`${accent}18`,color:accent,fontSize:11,padding:"3px 10px",borderRadius:20,fontWeight:700}}>ACTIVE</span>}
             </div>
-            <button style={{...S.btn,background:isActive?accent:`linear-gradient(135deg,${C.g700},${C.g500})`}} onClick={()=>{setActiveOrgId(org.id);setPage("adm_home");notify(`Switched to ${org.name}`);}}>
+            <button style={{...S.btn,background:isActive?accent:`linear-gradient(135deg,${C.g700},${C.g500})`}} onClick={()=>{setActiveOrgId(org.id);setPage("adm_home");notify(`Switched to ${org.name}`);localStorage.setItem("saa_default_org",org.id);}}>
               {isActive?"✓ Currently managing":"Switch to this org"}
             </button>
           </div>
@@ -1496,7 +1414,6 @@ function AdminQR({notify, activeOrgId}) {
 
 function AdminReports({user, notify, activeOrgId}) {
   const [report,setReport]=useState(null), [loading,setLoading]=useState(true);
-  const [slipPreview,setSlipPreview]=useState(null);
   const [filterBranch,setFilterBranch]=useState("all"), [filterStatus,setFilterStatus]=useState("all");
   const [branches,setBranches]=useState([]);
   const now=new Date();
@@ -1510,78 +1427,6 @@ function AdminReports({user, notify, activeOrgId}) {
   },[activeOrgId]);
 
   if(loading) return <Spinner/>;
-
-  // Salary Slip Preview Modal
-  if(slipPreview) {
-    const s=slipPreview;
-    const mn=["January","February","March","April","May","June","July","August","September","October","November","December"];
-    const f2=n=>"₹"+Number(n||0).toLocaleString("en-IN",{minimumFractionDigits:2});
-    return(
-      <div style={{padding:20}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
-          <button onClick={()=>setSlipPreview(null)} style={{background:C.g100,border:"none",borderRadius:10,padding:"8px 16px",cursor:"pointer",color:C.g700,fontWeight:700}}>← Back</button>
-          <button onClick={()=>{
-            const html="<html><head><title>Salary Slip</title><style>body{font-family:Arial;padding:20px;color:#111}h2{color:#166534}table{width:100%;border-collapse:collapse}td{padding:8px;border-bottom:1px solid #eee}td:last-child{text-align:right}.net{font-size:18px;font-weight:900;color:#166534}.footer{margin-top:30px;display:flex;justify-content:space-between}</style></head><body>"
-              +"<h2>"+s.employee.org_name+"</h2><h3>Salary Slip — "+mn[s.period.month-1]+" "+s.period.year+"</h3>"
-              +"<p><b>"+s.employee.name+"</b> | "+(s.employee.designation||"")+" | "+(s.employee.branch_name||"")+"</p>"
-              +"<p>Employee Code: "+(s.employee.employee_code||"—")+" | Category: "+(s.employee.job_category||"—")+"</p><hr/>"
-              +"<table><tr><td>Basic Salary</td><td>"+f2(s.earnings.salary)+"</td></tr>"
-              +"<tr><td>Days Present / Total</td><td>"+s.attendance.presentDays+" / "+s.period.divisor+"</td></tr>"
-              +"<tr><td>Half Days</td><td>"+s.attendance.halfDays+"</td></tr>"
-              +"<tr><td><b>Gross Earned</b></td><td><b>"+f2(s.earnings.earnedGross)+"</b></td></tr>"
-              +"<tr><td colspan='2' style='background:#f9fafb;font-weight:700;font-size:12px;letter-spacing:1px'>DEDUCTIONS</td></tr>"
-              +"<tr><td>Late penalty</td><td>-"+f2(s.deductions.lateDeduction)+"</td></tr>"
-              +"<tr><td>Half day deduction</td><td>-"+f2(s.deductions.halfDayDeduction)+"</td></tr>"
-              +"<tr><td>Leave deduction</td><td>-"+f2(s.deductions.leaveDeduction)+"</td></tr>"
-              +"<tr><td>Early checkout</td><td>-"+f2(s.deductions.earlyDeduction)+"</td></tr>"
-              +"<tr><td>Advance recovery</td><td>-"+f2(s.deductions.advanceDeduction)+"</td></tr>"
-              +(s.deductions.adjDeduction>0?"<tr><td>Manual deduction</td><td>-"+f2(s.deductions.adjDeduction)+"</td></tr>":"")
-              +(s.deductions.adjBonus>0?"<tr><td>Bonus</td><td>+"+f2(s.deductions.adjBonus)+"</td></tr>":"")
-              +"<tr><td colspan='2' style='height:8px'></td></tr>"
-              +"<tr class='net'><td><b>NET PAYABLE</b></td><td><b>"+f2(s.netEarned)+"</b></td></tr></table>"
-              +"<div class='footer'><div style='text-align:center;border-top:1px solid #000;padding-top:6px;width:180px'>Employee Signature</div>"
-              +"<div style='text-align:center;border-top:1px solid #000;padding-top:6px;width:180px'>Authorised Signatory</div></div>"
-              +"</body></html>";
-            const w=window.open("","_blank");
-            if(w){w.document.write(html);w.document.close();setTimeout(()=>w.print(),500);}
-          }} style={{background:"#7c3aed",border:"none",borderRadius:10,color:"#fff",padding:"8px 16px",cursor:"pointer",fontWeight:700}}>🖨 Print / Download PDF</button>
-        </div>
-        <div style={{background:C.white,borderRadius:20,padding:20,boxShadow:`0 2px 12px ${C.g300}44`}}>
-          <h2 style={{color:C.g800,textAlign:"center",fontWeight:900,fontSize:20}}>{s.employee.org_name}</h2>
-          <p style={{textAlign:"center",color:C.gr500,marginBottom:16}}>Salary Slip — {mn[s.period.month-1]} {s.period.year}</p>
-          <div style={{background:C.g50,borderRadius:14,padding:14,marginBottom:16,display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-            {[["Employee",s.employee.name],["Designation",s.employee.designation||"—"],["Branch",s.employee.branch_name||"—"],["Code",s.employee.employee_code||"—"],["Category",s.employee.job_category||"—"]].map(([l,v])=>(
-              <div key={l}><p style={{color:C.gr400,fontSize:11}}>{l}</p><p style={{color:C.g800,fontWeight:700,fontSize:13}}>{v}</p></div>
-            ))}
-          </div>
-          {[
-            ["Basic Salary",f2(s.earnings.salary),false],
-            ["Days Present",s.attendance.presentDays+"/"+s.period.divisor,false],
-            ["Half Days",s.attendance.halfDays,false],
-            ["Gross Earned",f2(s.earnings.earnedGross),false],
-            ["— Deductions —","",false],
-            ["Late Penalty","-"+f2(s.deductions.lateDeduction),true],
-            ["Half Day Deduction","-"+f2(s.deductions.halfDayDeduction),true],
-            ["Leave Deduction","-"+f2(s.deductions.leaveDeduction),true],
-            ["Early Checkout","-"+f2(s.deductions.earlyDeduction),true],
-            ["Advance Recovery","-"+f2(s.deductions.advanceDeduction),true],
-            ...(s.deductions.adjDeduction>0?[["Manual Deduction","-"+f2(s.deductions.adjDeduction),true]]:[]),
-            ...(s.deductions.adjBonus>0?[["Bonus","+"+f2(s.deductions.adjBonus),false]]:[]),
-          ].map(([l,v,isDeduct])=>(
-            <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${C.g50}`}}>
-              <p style={{color:l.includes("—")?C.g600:C.gr600,fontSize:13,fontWeight:l.includes("—")?"700":"400"}}>{l}</p>
-              <p style={{color:isDeduct?C.red:C.g800,fontSize:13,fontWeight:600}}>{v}</p>
-            </div>
-          ))}
-          <div style={{background:C.g700,borderRadius:12,padding:"14px 16px",marginTop:12,display:"flex",justifyContent:"space-between"}}>
-            <p style={{color:"#fff",fontWeight:800,fontSize:16}}>NET PAYABLE</p>
-            <p style={{color:"#fff",fontWeight:900,fontSize:20}}>{f2(s.netEarned)}</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   if(!report) return <Empty icon="📊" msg="No report data"/>;
 
   let list=report.report||[];
@@ -1611,17 +1456,10 @@ function AdminReports({user, notify, activeOrgId}) {
             <div style={{textAlign:"right"}}><p style={{color:C.g700,fontWeight:900,fontSize:17}}>{fmt(e.netEarned||0)}</p>{(e.totalDeductions||0)>0&&<p style={{color:C.red,fontSize:12}}>-{fmt(e.totalDeductions)}</p>}</div>
           </div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-            {[["Present",e.presentDays,C.g600],["Half Day",e.halfDays||0,"#7c3aed"],["Late",e.lateDays,C.amber],["CL",e.casualUsed,C.blue],["Unauth",e.unauthLeaves,C.red]].map(([l,v,c])=>(
+            {[["Present",e.presentDays,C.g600],["Late",e.lateDays,C.amber],["CL",e.casualUsed,C.blue],["Unauth",e.unauthLeaves,C.red]].map(([l,v,c])=>(
               <span key={l} style={{background:`${c}15`,color:c,fontSize:12,padding:"3px 10px",borderRadius:20,fontWeight:700}}>{l}: {v||0}</span>
             ))}
           </div>
-          <button onClick={async()=>{
-            const y=now.getFullYear(), m=now.getMonth()+1;
-            try{
-              const slip=await GET("/api/salary-slip",{employee_id:e.id,year:y,month:m});
-              setSlipPreview(slip);
-            }catch(err){notify(err.message,"error");}
-          }} style={{marginTop:8,background:"#7c3aed",border:"none",borderRadius:10,color:"#fff",padding:"8px 16px",cursor:"pointer",fontSize:12,fontWeight:700,width:"100%"}}>📄 View Salary Slip</button>
         </div>
       ))}
       {list.length===0&&<Empty icon="📊" msg="No data for this month"/>}
@@ -1690,7 +1528,7 @@ function AdminSettings({user, notify, activeOrgId}) {
   };
 
   if(loading||!settings) return <Spinner/>;
-  const fields=[["grace_period_mins","Grace period (mins)"],["half_day_threshold_hrs","Half-day threshold (hrs)"],["late_deduction_per_occ","Late deduction (₹)"],["max_allowed_lates_per_month","Max lates/month"],["excess_late_penalty","Excess late penalty (₹)"],["unauth_leave_penalty","Unauth leave penalty (₹)"],["no_show_penalty","No-show penalty (₹)"],["casual_leave_per_month","Casual leave/month"],["working_days_per_month","Working days/month"],["geo_fence_radius_meters","Geo-fence radius (m)"]];
+  const fields=[["grace_period_mins","Grace period (mins)"],["late_deduction_per_occ","Late deduction (₹)"],["max_allowed_lates_per_month","Max lates/month"],["excess_late_penalty","Excess late penalty (₹)"],["unauth_leave_penalty","Unauth leave penalty (₹)"],["no_show_penalty","No-show penalty (₹)"],["casual_leave_per_month","Casual leave/month"],["working_days_per_month","Working days/month"],["geo_fence_radius_meters","Geo-fence radius (m)"]];
   <><label style={S.label}>Early checkout flat penalty (₹)</label><input style={S.input} type="number" value={settings.early_checkout_flat_penalty || 50}
     onChange={e => setSettings(s => ({ ...s, early_checkout_flat_penalty: e.target.value }))} /><p style={{ color: C.gr500, fontSize: 12, marginBottom: 10 }}>Fixed penalty per early checkout + proportional hourly deduction auto-calculated from salary</p></>
   return(
@@ -1823,9 +1661,8 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
   };
 
   const loadRecords = async () => {
-    
+    setLoading(true);
     try {
-      setLoading(true);
       let from, to;
       if (view === "day") { from = selDate; to = selDate; }
       else {
@@ -1839,8 +1676,7 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
       ]);
       setRecords(att || []);
       setLeaves(lv || []);
-    } catch (err) { notify(err.message, "error"); setRecords([]); setLeaves([]); }
-    finally { setLoading(false); }
+    } catch (err) { notify(err.message, "error"); }
   };
 
   useEffect(() => { if (activeOrgId) loadAll(); }, [activeOrgId]);
@@ -1861,15 +1697,14 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
       return { type: "leave", ...(lc[leave.type] || { label: "L", color: "#7c3aed", bg: "#ede9fe" }) };
     }
     const rec = getRec(empId, date);
-    // Check half day leave
-    const isHalfDay = leaves.some(l=>l.employee_id===empId&&l.type==='half_day'&&String(l.from_date||"").slice(0,10)===dateStr&&l.status==='approved');
+    const isHalfDay=leaves.some(l=>l.employee_id===empId&&l.type==='half_day'&&String(l.from_date||"").slice(0,10)===dateStr&&l.status==='approved');
+    if(isHalfDay&&rec&&rec.check_in_time) return {type:"half_day",label:"HD",color:"#7c3aed",bg:"#ede9fe",rec};
+    if(isHalfDay) return {type:"half_day",label:"HD",color:"#7c3aed",bg:"#ede9fe",rec:null};
     if (rec && rec.check_in_time) {
-      if(isHalfDay) return { type:"half_day", label:"HD", color:"#7c3aed", bg:"#ede9fe", rec };
       return rec.is_late
         ? { type: "late", label: `L${rec.late_mins || ""}`, color: "#d97706", bg: "#fef3c7", rec }
         : { type: "present", label: "P", color: "#16a34a", bg: "#dcfce7", rec };
     }
-    if(isHalfDay) return { type:"half_day", label:"HD", color:"#7c3aed", bg:"#ede9fe", rec:null };
     return { type: "absent", label: "A", color: "#dc2626", bg: "#fee2e2" };
   };
 
@@ -2125,17 +1960,12 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
                 Cancel
               </button>
             </div>
-            {/* Mark Absent Button */}
             <button
               onClick={async()=>{
-                if(!editForm.notes||!editForm.notes.trim()){notify("Reason required to mark absent","error");return;}
-                if(!window.confirm("Mark "+editRec.employee_name+" as ABSENT on "+editRec.date+"? This will delete their attendance record.")) return;
-                try{
-                  await POST("/api/attendance/admin-mark",{employee_id:editRec.employee_id,date:editRec.date,notes:editForm.notes,clear:true});
-                  notify("Marked as absent ✓");
-                  setEditRec(null);
-                  await loadRecords();
-                }catch(e){notify(e.message,"error");}
+                if(!editForm.notes||!editForm.notes.trim()){notify("Reason required","error");return;}
+                if(!window.confirm("Mark "+editRec.employee_name+" as ABSENT on "+editRec.date+"? This deletes their attendance.")) return;
+                try{await POST("/api/attendance/admin-mark",{employee_id:editRec.employee_id,date:editRec.date,notes:editForm.notes,clear:true});notify("Marked absent ✓");setEditRec(null);await loadRecords();}
+                catch(e){notify(e.message,"error");}
               }}
               style={{width:"100%",background:"#ef4444",border:"none",borderRadius:14,color:"#fff",padding:"12px",fontSize:13,fontWeight:700,cursor:"pointer",marginBottom:8}}>
               🚫 Mark as Absent
@@ -4311,7 +4141,6 @@ function TaskManager({user, notify, activeOrgId, isAdminView}) {
 
 
 
-// ── SALARY ADJUSTMENT MANAGER ─────────────────────────────────
 function SalaryAdjustmentManager({notify, activeOrgId}) {
   const [employees, setEmployees] = useState([]);
   const [selEmp, setSelEmp] = useState("");
@@ -4320,75 +4149,47 @@ function SalaryAdjustmentManager({notify, activeOrgId}) {
   const [adjustments, setAdjustments] = useState([]);
   const [form, setForm] = useState({amount:"", type:"deduction", reason:""});
   const fv=(k,v)=>setForm(p=>({...p,[k]:v}));
-
-  useEffect(()=>{
-    if(activeOrgId) GET("/api/employees",{org_id:activeOrgId}).then(e=>setEmployees(e||[])).catch(()=>{});
-  },[activeOrgId]);
-
+  useEffect(()=>{if(activeOrgId)GET("/api/employees",{org_id:activeOrgId}).then(e=>setEmployees(e||[])).catch(()=>{});},[activeOrgId]);
   const load=async()=>{
-    if(!selEmp) return;
-    const [y,m]=selMonth.split("-").map(Number);
-    GET("/api/salary-adjustments",{employee_id:selEmp,year:y,month:m,org_id:activeOrgId})
-      .then(r=>setAdjustments(r||[])).catch(()=>{});
+    if(!selEmp)return;
+    const[y,m]=selMonth.split("-").map(Number);
+    GET("/api/salary-adjustments",{employee_id:selEmp,year:y,month:m,org_id:activeOrgId}).then(r=>setAdjustments(r||[])).catch(()=>{});
   };
   useEffect(()=>{load();},[selEmp,selMonth]);
-
   const save=async()=>{
     if(!selEmp){notify("Select employee","error");return;}
     if(!form.amount||!form.reason){notify("Amount and reason required","error");return;}
-    const [y,m]=selMonth.split("-").map(Number);
-    try{
-      await POST("/api/salary-adjustments",{employee_id:selEmp,amount:Number(form.amount),type:form.type,reason:form.reason,year:y,month:m,org_id:activeOrgId});
-      notify("Adjustment saved ✓");
-      setForm({amount:"",type:"deduction",reason:""});
-      load();
-    }catch(e){notify(e.message,"error");}
-  };
-
-  const del=async(id)=>{
-    if(!window.confirm("Delete this adjustment?")) return;
-    try{await DEL("/api/salary-adjustments/"+id);notify("Deleted");load();}
+    const[y,m]=selMonth.split("-").map(Number);
+    try{await POST("/api/salary-adjustments",{employee_id:selEmp,amount:Number(form.amount),type:form.type,reason:form.reason,year:y,month:m,org_id:activeOrgId});notify("Saved ✓");setForm({amount:"",type:"deduction",reason:""});load();}
     catch(e){notify(e.message,"error");}
   };
-
+  const del=async(id)=>{if(!window.confirm("Delete?"))return;try{await DEL("/api/salary-adjustments/"+id);notify("Deleted");load();}catch(e){notify(e.message,"error");}};
   const netAdj=adjustments.reduce((s,a)=>s+(a.type==="bonus"?Number(a.amount):-Number(a.amount)),0);
-
   return(
     <div style={{padding:20}}>
-      <h2 style={{color:C.g800,fontSize:22,fontWeight:800,marginBottom:4}}>Salary Adjustments</h2>
-      <p style={{color:C.gr500,fontSize:13,marginBottom:16}}>Add bonus, deduction or correction to monthly salary</p>
+      <h2 style={{color:C.g800,fontSize:22,fontWeight:800,marginBottom:16}}>Salary Adjustments</h2>
       <select style={{...S.select,marginBottom:10}} value={selEmp} onChange={e=>setSelEmp(e.target.value)}>
         <option value="">Select employee</option>
-        {(employees||[]).map(e=><option key={e.id} value={e.id}>{e.name} — {e.branch_name||""}</option>)}
+        {employees.map(e=><option key={e.id} value={e.id}>{e.name} — {e.branch_name||""}</option>)}
       </select>
       <input style={{...S.input,marginBottom:16}} type="month" value={selMonth} onChange={e=>setSelMonth(e.target.value)}/>
-      {adjustments.length>0&&(
-        <div style={{background:netAdj>=0?C.g50:"#fee2e2",borderRadius:14,padding:14,marginBottom:16,border:`1px solid ${netAdj>=0?C.g300:"#fca5a5"}`}}>
-          <p style={{color:netAdj>=0?C.g700:C.red,fontWeight:800,fontSize:15}}>Net: {netAdj>=0?"+":""}{fmt(netAdj)}</p>
-        </div>
-      )}
+      {adjustments.length>0&&<div style={{background:netAdj>=0?C.g50:"#fee2e2",borderRadius:14,padding:14,marginBottom:16,border:`1px solid ${netAdj>=0?C.g300:"#fca5a5"}`}}><p style={{color:netAdj>=0?C.g700:C.red,fontWeight:800}}>Net: {netAdj>=0?"+":""}{fmt(netAdj)}</p></div>}
       <div style={{background:C.white,borderRadius:16,padding:16,marginBottom:16,boxShadow:`0 2px 8px ${C.g300}33`}}>
         <p style={{color:C.g800,fontWeight:800,marginBottom:12}}>Add adjustment</p>
-        <select style={{...S.select,marginBottom:10}} value={form.type} onChange={e=>fv("type",e.target.value)}>
-          <option value="deduction">Deduction (reduces salary)</option>
-          <option value="bonus">Bonus (adds to salary)</option>
+        <select style={{...S.select,marginBottom:8}} value={form.type} onChange={e=>fv("type",e.target.value)}>
+          <option value="deduction">Deduction</option>
+          <option value="bonus">Bonus</option>
           <option value="correction">Correction</option>
         </select>
-        <input style={{...S.input,marginBottom:10}} type="number" placeholder="Amount (₹)" value={form.amount} onChange={e=>fv("amount",e.target.value)}/>
-        <input style={{...S.input,marginBottom:10}} placeholder="Reason (required)" value={form.reason} onChange={e=>fv("reason",e.target.value)}/>
-        <button style={S.btn} onClick={save}>Save adjustment</button>
+        <input style={{...S.input,marginBottom:8}} type="number" placeholder="Amount (₹)" value={form.amount} onChange={e=>fv("amount",e.target.value)}/>
+        <input style={{...S.input,marginBottom:8}} placeholder="Reason (required)" value={form.reason} onChange={e=>fv("reason",e.target.value)}/>
+        <button style={S.btn} onClick={save}>Save</button>
       </div>
       {adjustments.map(a=>(
-        <div key={a.id} style={{background:C.white,borderRadius:14,padding:14,marginBottom:10,borderLeft:`4px solid ${a.type==="bonus"?C.g600:C.red}`}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
-            <div>
-              <p style={{color:a.type==="bonus"?C.g700:C.red,fontWeight:800,fontSize:15}}>
-                {a.type==="bonus"?"+":"-"}{fmt(a.amount)} — {a.type==="bonus"?"Bonus":a.type==="deduction"?"Deduction":"Correction"}
-              </p>
-              <p style={{color:C.gr500,fontSize:13}}>{a.reason}</p>
-              <p style={{color:C.gr400,fontSize:11}}>by {a.created_by_name} · {new Date(a.created_at).toLocaleDateString("en-IN",{day:"numeric",month:"short"})}</p>
-            </div>
-            <button onClick={()=>del(a.id)} style={{background:"#fff",border:`1px solid ${C.red}`,borderRadius:8,padding:"5px 10px",cursor:"pointer",color:C.red,fontSize:12}}>🗑</button>
+        <div key={a.id} style={{background:C.white,borderRadius:14,padding:14,marginBottom:8,borderLeft:`4px solid ${a.type==="bonus"?C.g600:C.red}`}}>
+          <div style={{display:"flex",justifyContent:"space-between"}}>
+            <div><p style={{color:a.type==="bonus"?C.g700:C.red,fontWeight:800}}>{a.type==="bonus"?"+":"-"}{fmt(a.amount)} — {a.type}</p><p style={{color:C.gr500,fontSize:12}}>{a.reason}</p></div>
+            <button onClick={()=>del(a.id)} style={{background:"none",border:`1px solid ${C.red}`,borderRadius:8,padding:"4px 10px",cursor:"pointer",color:C.red,fontSize:12}}>🗑</button>
           </div>
         </div>
       ))}
@@ -4398,117 +4199,46 @@ function SalaryAdjustmentManager({notify, activeOrgId}) {
 }
 
 
-// ── SALARY SLIP PDF ───────────────────────────────────────────
-const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
-
-function SalarySlip({user, notify, empId, empName, isAdmin}) {
+function SalarySlip({user, notify}) {
   const now = new Date();
   const [selMonth, setSelMonth] = useState(now.getFullYear()+"-"+pad(now.getMonth()+1));
   const [slip, setSlip] = useState(null);
   const [loading, setLoading] = useState(false);
+  const MONTHS=["January","February","March","April","May","June","July","August","September","October","November","December"];
+  const f2=n=>"₹"+Number(n||0).toLocaleString("en-IN",{minimumFractionDigits:2});
 
-  const load = async () => {
+  const load=async()=>{
     setLoading(true);
-    const [y,m] = selMonth.split("-").map(Number);
-    try {
-      const params = {year:y, month:m};
-      if(empId && empId !== user.id) params.employee_id = empId;
-      const data = await GET("/api/salary-slip", params);
-      setSlip(data);
-    } catch(e) { notify(e.message,"error"); }
-    finally { setLoading(false); }
+    const[y,m]=selMonth.split("-").map(Number);
+    try{const d=await GET("/api/salary-slip",{year:y,month:m});setSlip(d);}
+    catch(e){notify(e.message,"error");}
+    finally{setLoading(false);}
   };
 
-  const printSlip = () => {
-    if(!slip) return;
-    const [y,m] = selMonth.split("-").map(Number);
-    const monthName = MONTH_NAMES[m-1];
-    const fmt2 = n => "₹"+Number(n||0).toLocaleString("en-IN",{minimumFractionDigits:2,maximumFractionDigits:2});
-    
-    const rows = [
-      ["Basic Salary", fmt2(slip.earnings.salary)],
-      ["Working Days", slip.period.divisor],
-      ["Days Present", slip.attendance.presentDays],
-      ["Days Absent", slip.attendance.absentDays],
-      ["Half Days", slip.attendance.halfDays],
-      ["Late Arrivals", slip.attendance.lateDays],
-      ["Gross Earned", fmt2(slip.earnings.earnedGross)],
-      ["---","---"],
-      ["DEDUCTIONS",""],
-      ["Late Penalty", fmt2(slip.deductions.lateDeduction)],
-      ["Half Day Deduction", fmt2(slip.deductions.halfDayDeduction)],
-      ["Leave Deduction", fmt2(slip.deductions.leaveDeduction)],
-      ["Early Checkout Penalty", fmt2(slip.deductions.earlyDeduction)],
-      ["Advance Recovery", fmt2(slip.deductions.advanceDeduction)],
-      ["Manual Deductions", fmt2(slip.deductions.adjDeduction)],
-      ["Total Deductions", fmt2(slip.deductions.totalDeductions)],
-      ["---","---"],
-      ...(slip.deductions.adjBonus>0?[["Bonus Added", "+"+fmt2(slip.deductions.adjBonus)]]:[] ),
-      ["NET PAYABLE", fmt2(slip.netEarned)],
-    ];
-
-    const adjHtml = slip.deductions.adjustments?.length > 0
-      ? slip.deductions.adjustments.map(a =>
-          "<tr><td style='padding:4px 8px;color:#6b7280;font-size:12px'>" +
-          (a.type==="bonus"?"+ Bonus: ":"- Deduction: ") + a.reason +
-          "</td><td style='padding:4px 8px;text-align:right;font-size:12px'>" +
-          fmt2(a.amount) + "</td></tr>"
-        ).join("")
-      : "";
-
-    const html = "<html><head><title>Salary Slip - "+slip.employee.name+"</title>"
-      +"<style>body{font-family:Arial,sans-serif;margin:0;padding:20px;color:#111}"
-      +".header{text-align:center;margin-bottom:20px;border-bottom:2px solid #166534;padding-bottom:12px}"
-      +".org{font-size:22px;font-weight:900;color:#166534}"
-      +".title{font-size:16px;color:#374151;margin-top:4px}"
-      +".emp-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px 20px;margin:16px 0;background:#f0faf4;padding:12px;border-radius:8px}"
-      +".emp-row{font-size:13px;color:#374151}"
-      +".emp-label{color:#6b7280;font-size:11px}"
-      +"table{width:100%;border-collapse:collapse;margin-top:12px}"
-      +"tr:nth-child(even){background:#f9fafb}"
-      +"td{padding:7px 10px;font-size:13px}"
-      +"td:last-child{text-align:right}"
-      +".section-header td{background:#166534;color:#fff;font-weight:700;font-size:12px;letter-spacing:1px;padding:6px 10px}"
-      +".total-row td{font-weight:900;font-size:15px;background:#dcfce7;color:#166534;border-top:2px solid #166534}"
-      +".net-row td{font-weight:900;font-size:18px;background:#166534;color:#fff}"
-      +".footer{margin-top:30px;display:grid;grid-template-columns:1fr 1fr;gap:20px}"
-      +".sign-box{text-align:center;border-top:1px solid #374151;padding-top:8px;font-size:12px;color:#6b7280}"
-      +"</style></head><body>"
-      +"<div class='header'><div class='org'>"+slip.employee.org_name+"</div>"
-      +"<div class='title'>SALARY SLIP — "+monthName+" "+y+"</div></div>"
-      +"<div class='emp-grid'>"
-      +"<div class='emp-row'><div class='emp-label'>Employee Name</div>"+slip.employee.name+"</div>"
-      +"<div class='emp-row'><div class='emp-label'>Designation</div>"+(slip.employee.designation||"—")+"</div>"
-      +"<div class='emp-row'><div class='emp-label'>Branch</div>"+(slip.employee.branch_name||"—")+"</div>"
-      +"<div class='emp-row'><div class='emp-label'>Employee Code</div>"+(slip.employee.employee_code||"—")+"</div>"
-      +"<div class='emp-row'><div class='emp-label'>Date of Joining</div>"+(slip.employee.date_of_joining?new Date(slip.employee.date_of_joining).toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"}):"—")+"</div>"
-      +"<div class='emp-row'><div class='emp-label'>Job Category</div>"+(slip.employee.job_category||"—")+"</div>"
-      +"</div>"
-      +"<table>"
-      +"<tr class='section-header'><td colspan='2'>EARNINGS & ATTENDANCE</td></tr>"
-      + rows.filter(r=>r[0]!=="---"&&r[0]!=="DEDUCTIONS"&&r[0]!=="NET PAYABLE"&&r[0]!=="Bonus Added"&&!r[0].includes("Deduction")&&!r[0].includes("Penalty")&&!r[0].includes("Recovery")).map(r=>
-          "<tr><td>"+r[0]+"</td><td>"+r[1]+"</td></tr>"
-        ).join("")
-      +"<tr class='section-header'><td colspan='2'>DEDUCTIONS</td></tr>"
-      +"<tr><td>Late penalty ("+slip.deductions.excessLates+" days after "+slip.deductions.monthlyGraceDays+" free)</td><td>"+fmt2(slip.deductions.lateDeduction)+"</td></tr>"
-      +"<tr><td>Half day deduction ("+slip.attendance.halfDays+" days)</td><td>"+fmt2(slip.deductions.halfDayDeduction)+"</td></tr>"
-      +"<tr><td>Leave deduction</td><td>"+fmt2(slip.deductions.leaveDeduction)+"</td></tr>"
-      +"<tr><td>Early checkout penalty ("+slip.deductions.earlyCheckouts+" times)</td><td>"+fmt2(slip.deductions.earlyDeduction)+"</td></tr>"
-      +"<tr><td>Advance recovery</td><td>"+fmt2(slip.deductions.advanceDeduction)+"</td></tr>"
-      +"<tr><td>Manual deductions</td><td>"+fmt2(slip.deductions.adjDeduction)+"</td></tr>"
-      + adjHtml
-      +"<tr class='total-row'><td>Total Deductions</td><td>"+fmt2(slip.deductions.totalDeductions)+"</td></tr>"
-      +(slip.deductions.adjBonus>0?"<tr><td>Bonus</td><td>+"+fmt2(slip.deductions.adjBonus)+"</td></tr>":"")
-      +"<tr class='net-row'><td>NET PAYABLE</td><td>"+fmt2(slip.netEarned)+"</td></tr>"
-      +"</table>"
-      +"<div class='footer'>"
-      +"<div class='sign-box'>Employee Signature</div>"
-      +"<div class='sign-box'>Authorised Signatory</div>"
-      +"</div>"
+  const print=()=>{
+    if(!slip)return;
+    const[y,m]=selMonth.split("-").map(Number);
+    const html="<html><head><title>Salary Slip</title><style>body{font-family:Arial;padding:20px;color:#111}h2{color:#166534}table{width:100%;border-collapse:collapse}td{padding:8px;border-bottom:1px solid #eee}td:last-child{text-align:right}.net{background:#166534;color:#fff;font-weight:900;font-size:18px}.footer{margin-top:30px;display:flex;justify-content:space-between}</style></head><body>"
+      +"<h2>"+slip.employee.org_name+"</h2><h3>Salary Slip — "+MONTHS[m-1]+" "+y+"</h3>"
+      +"<p><b>"+slip.employee.name+"</b> | "+(slip.employee.designation||"")+" | "+(slip.employee.branch_name||"")+"</p>"
+      +"<p>Code: "+(slip.employee.employee_code||"—")+" | Category: "+(slip.employee.job_category||"—")+"</p><hr/>"
+      +"<table><tr><td>Basic Salary</td><td>"+f2(slip.earnings.salary)+"</td></tr>"
+      +"<tr><td>Days Present / Total</td><td>"+slip.attendance.presentDays+" / "+slip.period.divisor+"</td></tr>"
+      +"<tr><td>Half Days</td><td>"+slip.attendance.halfDays+"</td></tr>"
+      +"<tr><td><b>Gross Earned</b></td><td><b>"+f2(slip.earnings.earnedGross)+"</b></td></tr>"
+      +"<tr><td colspan=2 style='background:#f3f4f6;font-weight:700;font-size:12px'>DEDUCTIONS</td></tr>"
+      +"<tr><td>Late penalty</td><td>-"+f2(slip.deductions.lateDeduction)+"</td></tr>"
+      +"<tr><td>Half day deduction</td><td>-"+f2(slip.deductions.halfDayDeduction)+"</td></tr>"
+      +"<tr><td>Leave deduction</td><td>-"+f2(slip.deductions.leaveDeduction)+"</td></tr>"
+      +"<tr><td>Early checkout</td><td>-"+f2(slip.deductions.earlyDeduction)+"</td></tr>"
+      +"<tr><td>Advance recovery</td><td>-"+f2(slip.deductions.advanceDeduction)+"</td></tr>"
+      +(slip.deductions.adjDeduction>0?"<tr><td>Manual deduction</td><td>-"+f2(slip.deductions.adjDeduction)+"</td></tr>":"")
+      +(slip.deductions.adjBonus>0?"<tr><td>Bonus</td><td>+"+f2(slip.deductions.adjBonus)+"</td></tr>":"")
+      +"<tr class='net'><td>NET PAYABLE</td><td>"+f2(slip.netEarned)+"</td></tr></table>"
+      +"<div class='footer'><div style='text-align:center;border-top:1px solid #000;padding-top:6px;width:180px'>Employee Signature</div><div style='text-align:center;border-top:1px solid #000;padding-top:6px;width:180px'>Authorised Signatory</div></div>"
       +"</body></html>";
-
-    const w = window.open("","_blank");
-    if(w) { w.document.write(html); w.document.close(); setTimeout(()=>w.print(), 600); }
+    const w=window.open("","_blank");
+    if(w){w.document.write(html);w.document.close();setTimeout(()=>w.print(),500);}
   };
 
   return(
@@ -4516,35 +4246,23 @@ function SalarySlip({user, notify, empId, empName, isAdmin}) {
       <p style={{color:C.g800,fontWeight:800,fontSize:15,marginBottom:12}}>📄 Salary Slip</p>
       <div style={{display:"flex",gap:8,marginBottom:12}}>
         <input style={{...S.input,flex:1,marginBottom:0}} type="month" value={selMonth} onChange={e=>setSelMonth(e.target.value)}/>
-        <button style={{...S.btn,width:"auto",padding:"0 16px"}} onClick={load} disabled={loading}>
-          {loading?"Loading...":"Generate"}
-        </button>
+        <button style={{...S.btn,width:"auto",padding:"0 16px"}} onClick={load} disabled={loading}>{loading?"Loading...":"Generate"}</button>
       </div>
       {slip&&(
         <>
           <div style={{background:C.g50,borderRadius:14,padding:14,marginBottom:12}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
               <p style={{color:C.g800,fontWeight:800}}>{slip.employee.name}</p>
-              <p style={{color:C.g600,fontWeight:900,fontSize:18}}>₹{Number(slip.netEarned).toLocaleString("en-IN")}</p>
+              <p style={{color:C.g600,fontWeight:900,fontSize:18}}>{f2(slip.netEarned)}</p>
             </div>
-            <p style={{color:C.gr500,fontSize:12}}>{MONTH_NAMES[selMonth.split("-")[1]-1]} {selMonth.split("-")[0]} · {slip.attendance.presentDays}/{slip.period.divisor} days present</p>
-            {[
-              ["Gross earned","₹"+Number(slip.earnings.earnedGross).toLocaleString("en-IN")],
-              ["Late penalty","-₹"+Number(slip.deductions.lateDeduction).toLocaleString("en-IN")],
-              ["Half day deduction","-₹"+Number(slip.deductions.halfDayDeduction).toLocaleString("en-IN")],
-              ["Leave deduction","-₹"+Number(slip.deductions.leaveDeduction).toLocaleString("en-IN")],
-              ["Early checkout","-₹"+Number(slip.deductions.earlyDeduction).toLocaleString("en-IN")],
-              ["Advance recovery","-₹"+Number(slip.deductions.advanceDeduction).toLocaleString("en-IN")],
-              ...(slip.deductions.adjBonus>0?[["Bonus","+₹"+Number(slip.deductions.adjBonus).toLocaleString("en-IN")]]: []),
-              ...(slip.deductions.adjDeduction>0?[["Manual deduction","-₹"+Number(slip.deductions.adjDeduction).toLocaleString("en-IN")]]: []),
-            ].map(([l,v])=>(
+            {[["Gross earned",f2(slip.earnings.earnedGross)],["Half days",String(slip.attendance.halfDays)],["Late penalty","-"+f2(slip.deductions.lateDeduction)],["Leave deduction","-"+f2(slip.deductions.leaveDeduction)],["Early checkout","-"+f2(slip.deductions.earlyDeduction)],["Advance","-"+f2(slip.deductions.advanceDeduction)],...(slip.deductions.adjBonus>0?[["Bonus","+"+f2(slip.deductions.adjBonus)]]:[]),...(slip.deductions.adjDeduction>0?[["Manual deduction","-"+f2(slip.deductions.adjDeduction)]]:[])].map(([l,v])=>(
               <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"4px 0",borderBottom:`1px solid ${C.g100}`}}>
                 <p style={{color:C.gr500,fontSize:12}}>{l}</p>
                 <p style={{color:C.gr700,fontSize:12,fontWeight:600}}>{v}</p>
               </div>
             ))}
           </div>
-          <button style={{...S.btn,background:"#7c3aed"}} onClick={printSlip}>🖨 Download / Print PDF</button>
+          <button style={{...S.btn,background:"#7c3aed"}} onClick={print}>🖨 Print / Download PDF</button>
         </>
       )}
     </div>
