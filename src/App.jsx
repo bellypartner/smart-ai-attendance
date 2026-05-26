@@ -610,37 +610,40 @@ function EmpSalary({user, notify}) {
   if(loading) return <Spinner/>;
   if(!report) return <Empty icon="💰" msg="No salary data yet"/>;
   return(
-    <><div style={{ padding: 20 }}>
-      <h2 style={{ color: C.g800, fontSize: 22, fontWeight: 800, marginBottom: 16 }}>Salary Dashboard</h2>
-      <div style={{ background: `linear-gradient(135deg,${C.g800},${C.g600})`, borderRadius: 24, padding: 24, marginBottom: 20 }}>
-        <p style={{ color: "rgba(255,255,255,0.65)", fontSize: 13 }}>{now.toLocaleDateString("en-IN", { month: "long", year: "numeric" })}</p>
-        <p style={{ color: C.white, fontSize: 36, fontWeight: 900, margin: "6px 0 2px" }}>{fmt(report.netEarned || 0)}</p>
-        <p style={{ color: "rgba(255,255,255,0.55)", fontSize: 13 }}>of {fmt(report?.salary || user.salary || 0)}/month</p>
-        <div style={{ background: "rgba(255,255,255,0.15)", borderRadius: 8, height: 7, marginTop: 14 }}>
-          <div style={{ background: C.g300, height: 7, borderRadius: 8, width: `${Math.min(100, ((report.netEarned || 0) / (user.salary || 1)) * 100)}%` }} />
+    <div style={{padding:20}}>
+      <h2 style={{color:C.g800,fontSize:22,fontWeight:800,marginBottom:16}}>Salary Dashboard</h2>
+      <div style={{background:`linear-gradient(135deg,${C.g800},${C.g600})`,borderRadius:24,padding:24,marginBottom:20}}>
+        <p style={{color:"rgba(255,255,255,0.65)",fontSize:13}}>{now.toLocaleDateString("en-IN",{month:"long",year:"numeric"})}</p>
+        <p style={{color:C.white,fontSize:36,fontWeight:900,margin:"6px 0 2px"}}>{fmt(report.netEarned||0)}</p>
+        <p style={{color:"rgba(255,255,255,0.55)",fontSize:13}}>of {fmt(report?.salary||user.salary||0)}/month</p>
+        <div style={{background:"rgba(255,255,255,0.15)",borderRadius:8,height:7,marginTop:14}}>
+          <div style={{background:C.g300,height:7,borderRadius:8,width:`${Math.min(100,((report.netEarned||0)/(user.salary||1))*100)}%`}}/>
         </div>
       </div>
-      {([
-        ["Days Present", report.presentDays],
-        ["Gross Earned", fmt(report.earnedGross || 0)],
-        ["Late Deductions", `-${fmt(report.lateDeductions || 0)}`],
-        ["CL used/allowed", `${report.clUsed || 0}/${report.clAllowed || 0}`],
-        ["SL used/allowed", `${report.slUsed || 0}/${report.slAllowed || 0}`],
-        ["Leave Deductions", `-${fmt(report.leaveDeductions || 0)}`],
-        ["No-Show", `-${fmt(report.noShowDeductions || 0)}`],
-        ["Early Checkout", `-${fmt(report.earlyDeductions || 0)}`],
-        ["Advance Recovery", `-${fmt(report.advanceDeduction || 0)}`],
-        ...(report.adjBonus > 0 ? [["Bonus", `+${fmt(report.adjBonus)}`]] : []),
-        ...(report.adjDeduction > 0 ? [["Manual Deduction", `-${fmt(report.adjDeduction)}`]] : []),
-        ["Net Earned", fmt(report.netEarned || 0)]
-      ]).map(([l, v]) => (
-        <div key={l} style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderBottom: `1px solid ${C.g50}` }}>
-          <span style={{ color: C.gr500, fontSize: 14 }}>{l}</span>
-          <span style={{ color: C.gr900, fontWeight: 700, fontSize: 14 }}>{v}</span>
-        </div>
-      ))}
-    </div><SalarySlip user={user} notify={notify} /></>
-    );
+      {
+        ([
+          ["Days Present", report.presentDays],
+          ["Gross Earned", fmt(report.earnedGross||0)],
+          ["Late Deductions", `-${fmt(report.lateDeductions||0)}`],
+          ["CL used/allowed", `${report.clUsed||0}/${report.clAllowed||0}`],
+          ["SL used/allowed", `${report.slUsed||0}/${report.slAllowed||0}`],
+          ["Leave Deductions", `-${fmt(report.leaveDeductions||0)}`],
+          ["No-Show", `-${fmt(report.noShowDeductions||0)}`],
+          ["Early Checkout", `-${fmt(report.earlyDeductions||0)}`],
+          ["Advance Recovery", `-${fmt(report.advanceDeduction||0)}`],
+          ...(report.adjBonus>0 ? [["Bonus", `+${fmt(report.adjBonus)}`]] : []),
+          ...(report.adjDeduction>0 ? [["Manual Deduction", `-${fmt(report.adjDeduction)}`]] : []),
+          ["Net Earned", fmt(report.netEarned||0)]
+        ]).map(([l,v]) => (
+          <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"10px 0",borderBottom:`1px solid ${C.g50}`}}>
+            <span style={{color:C.gr500,fontSize:14}}>{l}</span>
+            <span style={{color:C.gr900,fontWeight:700,fontSize:14}}>{v}</span>
+          </div>
+        ))
+      }
+      <SalarySlip user={user} notify={notify}/>
+    </div>
+  );
 }
 
 function EmpProfile({user, notify}) {
