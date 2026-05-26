@@ -1755,7 +1755,8 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
       });
       notify("Attendance cleared");
       await loadRecords();
-    } catch (err) { notify(err.message, "error"); }
+    } catch (err) { notify(err.message, "error"); setRecords([]); setLeaves([]); }
+    finally { setLoading(false); }
   };
 
   const getDaysInMonth = () => {
