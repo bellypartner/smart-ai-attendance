@@ -1069,7 +1069,7 @@ app.get('/api/my-salary', auth(['employee','branch_admin']), async (req, res) =>
     const [{ rows: settRows }, { rows: att }, { rows: lvs }, { rows: uRows }, { rows: advRows }] = await Promise.all([
       db('SELECT * FROM org_settings WHERE org_id=$1', [req.user.org_id]),
       db('SELECT * FROM attendance_records WHERE employee_id=$1 AND date BETWEEN $2 AND $3', [req.user.id, from, to]),
-      db('SELECT * FROM leaves WHERE employee_id=$1 AND from_date BETWEEN $2::date AND $3::date', [req.user.id, from, to]),
+      db('SELECT * FROM leaves WHERE employee_id=$1 AND date BETWEEN $2::date AND $3::date', [req.user.id, from, to]),
       db('SELECT salary, working_days_type FROM users WHERE id=$1', [req.user.id]),
       db(`SELECT COALESCE(SUM(monthly_recovery),0) AS monthly_deduction
           FROM salary_advances WHERE employee_id=$1 AND status='recovering'`, [req.user.id]),
@@ -1175,7 +1175,7 @@ app.get('/api/salary-report', auth(['super_admin', 'org_admin', 'branch_admin'])
     const report = await Promise.all(emps.map(async (emp) => {
       const [{ rows: att }, { rows: lvs }] = await Promise.all([
         db('SELECT * FROM attendance_records WHERE employee_id=$1 AND date BETWEEN $2 AND $3', [emp.id, from, to]),
-        db('SELECT * FROM leaves WHERE employee_id=$1 AND from_date BETWEEN $2::date AND $3::date', [emp.id, from, to]),
+        db('SELECT * FROM leaves WHERE employee_id=$1 AND date BETWEEN $2::date AND $3::date', [emp.id, from, to]),
       ]);
       const presentDays = att.filter(a => a.check_in_time).length;
       const lateDays = att.filter(a => a.is_late && a.approval_status !== 'rejected').length;
@@ -2023,7 +2023,7 @@ app.get('/api/salary-slip', auth(), async (req, res) => {
       'SELECT * FROM attendance_records WHERE employee_id=$1 AND date BETWEEN $2::date AND $3::date ORDER BY date',
       [empId, from, to]);
     const { rows: lvs } = await db(
-      "SELECT * FROM leaves WHERE employee_id=$1 AND from_date BETWEEN $2::date AND $3::date AND status='approved'",
+      "SELECT * FROM leaves WHERE employee_id=$1 AND date BETWEEN $2::date AND $3::date AND status='approved'",
       [empId, from, to]);
     const { rows: advRows } = await db(
       "SELECT COALESCE(SUM(monthly_recovery),0) AS monthly_deduction FROM salary_advances WHERE employee_id=$1 AND status='recovering'",
