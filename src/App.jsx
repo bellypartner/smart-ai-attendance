@@ -1684,7 +1684,7 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
   };
 
   useEffect(() => { if (activeOrgId) loadAll(); }, [activeOrgId]);
-  useEffect(() => { if (activeOrgId) loadRecords(); }, [view, selDate, selMonth, activeOrgId]);
+  useEffect(() => { if (activeOrgId && employees.length > 0) loadRecords(); }, [view, selDate, selMonth, activeOrgId, employees.length]);
 
   // Get attendance record for employee+date
   // API returns one row per employee per day with check_in_time + check_out_time
@@ -1692,7 +1692,7 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
     records.find(r => r.employee_id === empId && r.date === date);
 
   const getLeave = (empId, date) =>
-    leaves.find(l => l.employee_id === empId && l.date === date);
+    leaves.find(l => l.employee_id === empId && String(l.from_date||l.date||"").slice(0,10) === date);
 
   const getStatus = (empId, date) => {
     const leave = getLeave(empId, date);
@@ -2048,6 +2048,7 @@ function AdminLeaveHistory({ user, notify, activeOrgId }) {
       await PATCH(`/api/leaves/${editLeave.id}`, editForm);
       notify("Leave updated ✓"); setEditLeave(null); load();
     } catch (err) { notify(err.message, "error"); }
+    finally { setLoading(false); }
   };
 
   let list = leaves;
