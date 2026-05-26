@@ -1679,7 +1679,8 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
       ]);
       setRecords(att || []);
       setLeaves(lv || []);
-    } catch (err) { notify(err.message, "error"); }
+    } catch (err) { notify(err.message, "error"); setRecords([]); setLeaves([]); }
+    finally { setLoading(false); }
   };
 
   useEffect(() => { if (activeOrgId) loadAll(); }, [activeOrgId]);

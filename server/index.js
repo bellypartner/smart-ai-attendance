@@ -1165,7 +1165,7 @@ app.get('/api/salary-report', auth(['super_admin', 'org_admin', 'branch_admin'])
       db(`SELECT u.id, u.name, u.designation, u.salary, u.status,
                b.name AS branch_name, b.id AS branch_id
           FROM users u LEFT JOIN branches b ON b.id=u.branch_id
-          WHERE u.org_id=$1 AND u.role='employee' AND u.is_active=true
+          WHERE u.org_id=$1 AND u.role IN ('employee','branch_admin') AND u.is_active=true
           ${req.user.role === 'branch_admin' ? "AND u.branch_id='" + req.user.branch_id + "'" : ''}
           ORDER BY u.name`, [oid]),
       db('SELECT * FROM org_settings WHERE org_id=$1', [oid]),
