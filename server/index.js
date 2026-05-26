@@ -294,8 +294,8 @@ app.get('/api/employees', auth(['super_admin', 'org_admin', 'branch_admin']), as
              m.name AS manager_name
       FROM users u
       LEFT JOIN branches b ON b.id = u.branch_id
+       LEFT JOIN job_categories jc ON jc.id = u.job_category_id
       LEFT JOIN shift_templates st ON st.id = u.default_shift_id
-      LEFT JOIN job_categories jc ON jc.id = u.job_category_id
       LEFT JOIN users m ON m.id = u.manager_id
       WHERE u.org_id = $1
         AND u.role NOT IN ('super_admin')
@@ -810,18 +810,13 @@ app.post('/api/attendance/checkout', auth(['employee','branch_admin']), async (r
       const over=nowMins2>endMins?nowMins2-endMins:0;
       if(over>240){checkoutTime=String(rec.shift_end).slice(0,5);capped=true;}
     }
-    const cinMinsVal=toMins(String(rec.check_in_time||"").slice(0,5));
-    const coMinsVal=toMins(checkoutTime);
-    const workedMins=Math.max(0,coMinsVal-cinMinsVal);
-    let isEarly=false, earlyMins=0, autoHalfDay=false;
-    if(rec.shift_end&&rec.shift_start){
-      const shiftEndM=toMins(String(rec.shift_end).slice(0,5));
-      const { rows: settHd }=await db('SELECT half_day_threshold_hrs FROM org_settings WHERE org_id=$1',[oid]).catch(()=>({rows:[{}]}));
-      const halfDayThreshMins=Number(settHd[0]?.half_day_threshold_hrs||4.5)*60;
-      if(coMinsVal<shiftEndM){
-        if(workedMins<halfDayThreshMins){autoHalfDay=true;}
-        else{isEarly=true;earlyMins=shiftEndM-coMinsVal;}
-      }
+    const workedMins=Math.max(0,toMins(checkoutTime)-toMins(String(rec.check_in_time||"").slice(0,5)));
+    // Detect early checkout
+    let isEarly=false, earlyMins=0;
+    if(rec.shift_end) {
+      const shiftEndM = toMins(String(rec.shift_end).slice(0,5));
+      const coMins = toMins(checkoutTime);
+      if(coMins < shiftEndM) { isEarly=true; earlyMins=shiftEndM-coMins; }
     }
     await db(
       `UPDATE attendance_records SET check_out_time=$1,worked_mins=$2,
@@ -844,15 +839,7 @@ app.post('/api/attendance/admin-mark', auth(['super_admin', 'org_admin', 'branch
 
     // Clear attendance
     if (clear === true) {
-      if(!notes||!notes.trim()) return res.status(400).json({ error: 'Reason required to mark absent' });
       await db('DELETE FROM attendance_records WHERE employee_id=$1 AND date::text=$2', [employee_id, date]);
-      const { rows: empInfo } = await db('SELECT org_id FROM users WHERE id=$1', [employee_id]);
-      if(empInfo[0]) {
-        await createNotification(employee_id, empInfo[0].org_id,
-          '📋 Attendance corrected',
-          `Your attendance on ${date} was marked as absent. Reason: ${notes}`,
-          'approval_decision', null).catch(()=>{});
-      }
       return res.json({ ok: true, cleared: true });
     }
 
@@ -1957,10 +1944,8 @@ app.get('/api/salary-adjustments', auth(['super_admin','org_admin','branch_admin
     const { employee_id, year, month } = req.query;
     const params = [oid];
     let sql = `SELECT sa.*, u.name AS employee_name, cb.name AS created_by_name
-      FROM salary_adjustments sa
-      JOIN users u ON u.id = sa.employee_id
-      LEFT JOIN users cb ON cb.id = sa.created_by
-      WHERE sa.org_id=$1`;
+      FROM salary_adjustments sa JOIN users u ON u.id=sa.employee_id
+      LEFT JOIN users cb ON cb.id=sa.created_by WHERE sa.org_id=$1`;
     if(employee_id){params.push(employee_id);sql+=` AND sa.employee_id=$${params.length}`;}
     if(year){params.push(parseInt(year));sql+=` AND sa.year=$${params.length}`;}
     if(month){params.push(parseInt(month));sql+=` AND sa.month=$${params.length}`;}
@@ -1969,25 +1954,20 @@ app.get('/api/salary-adjustments', auth(['super_admin','org_admin','branch_admin
     res.json(rows);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
-
 app.post('/api/salary-adjustments', auth(['super_admin','org_admin']), async (req, res) => {
   try {
     const oid = orgId(req);
     const { employee_id, amount, type, reason, year, month } = req.body;
-    if(!reason?.trim()) return res.status(400).json({ error: 'Reason is required' });
-    const { rows } = await db(`
-      INSERT INTO salary_adjustments (org_id,employee_id,amount,type,reason,year,month,created_by)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *
-    `, [oid, employee_id, Number(amount), type||'deduction', reason, parseInt(year), parseInt(month), req.user.id]);
+    if(!reason?.trim()) return res.status(400).json({ error: 'Reason required' });
+    const { rows } = await db(`INSERT INTO salary_adjustments (org_id,employee_id,amount,type,reason,year,month,created_by)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [oid, employee_id, Number(amount), type||'deduction', reason, parseInt(year), parseInt(month), req.user.id]);
     res.json(rows[0]);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
-
 app.delete('/api/salary-adjustments/:id', auth(['super_admin','org_admin']), async (req, res) => {
-  try {
-    await db('DELETE FROM salary_adjustments WHERE id=$1', [req.params.id]);
-    res.json({ ok: true });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+  try { await db('DELETE FROM salary_adjustments WHERE id=$1', [req.params.id]); res.json({ ok: true }); }
+  catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 
@@ -2000,21 +1980,18 @@ app.get('/api/salary-slip', auth(), async (req, res) => {
     const y = parseInt(year || new Date().getFullYear());
     const m = parseInt(month || (new Date().getMonth()+1));
     const empId = employee_id || req.user.id;
-    if(empId !== req.user.id && !['super_admin','org_admin','branch_admin'].includes(req.user.role)) {
+    if(empId !== req.user.id && !['super_admin','org_admin','branch_admin'].includes(req.user.role))
       return res.status(403).json({ error: 'Forbidden' });
-    }
     const from = `${y}-${String(m).padStart(2,'0')}-01`;
     const to = new Date(y,m,0).toISOString().split('T')[0];
     const { rows: empRows } = await db(`
       SELECT u.*, b.name AS branch_name, o.name AS org_name,
              jc.name AS job_category_name, jc.working_days_type AS cat_working_days,
              jc.cl_per_month, jc.sl_per_month
-      FROM users u
-      LEFT JOIN branches b ON b.id=u.branch_id
+      FROM users u LEFT JOIN branches b ON b.id=u.branch_id
       LEFT JOIN organizations o ON o.id=u.org_id
       LEFT JOIN job_categories jc ON jc.id=u.job_category_id
-      WHERE u.id=$1
-    `, [empId]);
+      WHERE u.id=$1`, [empId]);
     if(!empRows[0]) return res.status(404).json({ error: 'Not found' });
     const emp = empRows[0];
     const { rows: settRows } = await db('SELECT * FROM org_settings WHERE org_id=$1', [emp.org_id]);
@@ -2033,8 +2010,8 @@ app.get('/api/salary-slip', auth(), async (req, res) => {
       [empId, y, m]).catch(()=>({rows:[]}));
     const salary = Number(emp.salary||0);
     const divisor = Number(emp.cat_working_days || s.working_days_per_month || 30);
-    const dailyRate = salary / divisor;
-    const hourlyRate = dailyRate / 8;
+    const dailyRate = salary/divisor;
+    const hourlyRate = dailyRate/8;
     const presentDays = att.filter(a=>a.check_in_time).length;
     const lateDays = att.filter(a=>a.is_late).length;
     const halfDays = lvs.filter(l=>l.type==='half_day').length;
@@ -2045,12 +2022,12 @@ app.get('/api/salary-slip', auth(), async (req, res) => {
     const earlyMinsTotal = earlyOuts.reduce((s,a)=>s+Number(a.early_mins||0),0);
     const clAllowed = Number(emp.cl_per_month||0);
     const slAllowed = Number(emp.sl_per_month||0);
-    const clExcess = Math.max(0, clUsed-clAllowed);
-    const slExcess = Math.max(0, slUsed-slAllowed);
-    const earnedGross = presentDays * dailyRate;
+    const clExcess = Math.max(0,clUsed-clAllowed);
+    const slExcess = Math.max(0,slUsed-slAllowed);
+    const earnedGross = presentDays*dailyRate;
     const monthlyGrace = s.monthly_grace_days||3;
-    const normalLates = Math.min(lateDays, monthlyGrace);
-    const excessLates = Math.max(0, lateDays-monthlyGrace);
+    const normalLates = Math.min(lateDays,monthlyGrace);
+    const excessLates = Math.max(0,lateDays-monthlyGrace);
     const lateDeduction = normalLates*(s.late_deduction_per_occ||50)+excessLates*(s.excess_late_deduction||100);
     const halfDayDeduction = halfDays*(dailyRate/2);
     const leaveDeduction = (unauthLeaves+clExcess+slExcess)*dailyRate;
@@ -2059,7 +2036,7 @@ app.get('/api/salary-slip', auth(), async (req, res) => {
     const adjBonus = adjRows.filter(a=>a.type==='bonus').reduce((s,a)=>s+Number(a.amount),0);
     const adjDeduction = adjRows.filter(a=>a.type!=='bonus').reduce((s,a)=>s+Number(a.amount),0);
     const totalDeductions = lateDeduction+halfDayDeduction+leaveDeduction+earlyDeduction+advanceDeduction+adjDeduction;
-    const netEarned = Math.max(0, earnedGross-totalDeductions)+adjBonus;
+    const netEarned = Math.max(0,earnedGross-totalDeductions)+adjBonus;
     res.json({
       employee:{name:emp.name,designation:emp.designation,employee_code:emp.employee_code,
         branch_name:emp.branch_name,org_name:emp.org_name,date_of_joining:emp.date_of_joining,

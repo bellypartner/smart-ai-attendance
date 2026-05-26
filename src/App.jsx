@@ -226,7 +226,7 @@ export default function App() {
     localStorage.setItem("saa_user", JSON.stringify(u));
     setUser(u);
     setActiveOrgId(u.org_id);
-    if(u.role==="super_admin"){const savedOrg=localStorage.getItem("saa_default_org");if(savedOrg){setActiveOrgId(savedOrg);setPage("adm_home");}else setPage("sa_orgs");}
+    if(u.role==="super_admin"){const so=localStorage.getItem("saa_default_org");if(so){setActiveOrgId(so);setPage("adm_home");}else setPage("sa_orgs");}
     else if(u.role==="employee") setPage("home");
     else setPage("adm_home");
     // Register push notifications
@@ -641,7 +641,6 @@ function EmpSalary({user, notify}) {
           </div>
         ))
       }
-      <SalarySlip user={user} notify={notify}/>
     </div>
   );
 }
@@ -700,7 +699,6 @@ function AdminApp({user, notify, page, setPage, activeOrgId, setActiveOrgId, onL
     ...(isSA||isOA?[{k:"adm_advances",i:"💳",l:"Advances"}]:[]),
     {k:"adm_calendar",i:"🗓",l:"Calendar"},
     {k:"adm_hierarchy",i:"🏛",l:"Hierarchy"},
-    ...(isSA||isOA?[{k:"adm_sal_adj",i:"⚖️",l:"Adj."}]:[]),
     ...(isSA||isOA?[
       {k:"adm_kpi_templates",i:"📊",l:"KPIs"},
       {k:"adm_kpi_review",i:"✅",l:"KPI Review"},
@@ -727,7 +725,6 @@ function AdminApp({user, notify, page, setPage, activeOrgId, setActiveOrgId, onL
     adm_advances: <AdminAdvances user={user} notify={notify} activeOrgId={activeOrgId}/>,
     adm_calendar: <AttendanceCalendar user={user} notify={notify} isAdmin={true} activeOrgId={activeOrgId}/>,
     adm_hierarchy: <HierarchyTable user={user} notify={notify} activeOrgId={activeOrgId}/>,
-    adm_sal_adj: <SalaryAdjustmentManager notify={notify} activeOrgId={activeOrgId}/>,
     adm_kpi_templates: <KPITemplateManager notify={notify} activeOrgId={activeOrgId}/>,
     adm_kpi_review: <KPIReview notify={notify} activeOrgId={activeOrgId}/>,
     adm_kpi_scores: <KPIScores notify={notify} activeOrgId={activeOrgId} user={user}/>,
@@ -1650,29 +1647,39 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
   const [editForm, setEditForm] = useState({ cin: "", cout: "", notes: "" });
   const [saving, setSaving] = useState(false);
 
+  const getDateRange = () => {
+    let from, to;
+    if (view === "day") { from = selDate; to = selDate; }
+    else {
+      const [y, m] = selMonth.split("-").map(Number);
+      from = `${y}-${pad(m)}-01`;
+      to = new Date(y, m, 0).toISOString().split("T")[0];
+    }
+    return { from, to };
+  };
+
   const loadAll = async () => {
     setLoading(true);
     try {
-      const [e, b] = await Promise.all([
+      const { from, to } = getDateRange();
+      const [e, b, att, lv] = await Promise.all([
         GET("/api/employees", { org_id: activeOrgId }),
         GET("/api/branches", { org_id: activeOrgId }),
+        GET("/api/attendance", { from, to, org_id: activeOrgId }),
+        GET("/api/leaves", { from, to, org_id: activeOrgId }),
       ]);
       setEmployees(e || []);
       setBranches(b || []);
-    } catch (err) { notify(err.message, "error"); }
+      setRecords(att || []);
+      setLeaves(lv || []);
+    } catch (err) { notify(err.message, "error"); setRecords([]); setLeaves([]); }
     finally { setLoading(false); }
   };
 
   const loadRecords = async () => {
     setLoading(true);
     try {
-      let from, to;
-      if (view === "day") { from = selDate; to = selDate; }
-      else {
-        const [y, m] = selMonth.split("-").map(Number);
-        from = `${y}-${pad(m)}-01`;
-        to = new Date(y, m, 0).toISOString().split("T")[0];
-      }
+      const { from, to } = getDateRange();
       const [att, lv] = await Promise.all([
         GET("/api/attendance", { from, to, org_id: activeOrgId }),
         GET("/api/leaves", { from, to, org_id: activeOrgId }),
@@ -1684,7 +1691,7 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
   };
 
   useEffect(() => { if (activeOrgId) loadAll(); }, [activeOrgId]);
-  useEffect(() => { if (activeOrgId && employees.length > 0) loadRecords(); }, [view, selDate, selMonth, activeOrgId, employees.length]);
+  useEffect(() => { if (activeOrgId) loadRecords(); }, [view, selDate, selMonth]);
 
   // Get attendance record for employee+date
   // API returns one row per employee per day with check_in_time + check_out_time
@@ -1701,9 +1708,6 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
       return { type: "leave", ...(lc[leave.type] || { label: "L", color: "#7c3aed", bg: "#ede9fe" }) };
     }
     const rec = getRec(empId, date);
-    const isHalfDay=leaves.some(l=>l.employee_id===empId&&l.type==='half_day'&&String(l.from_date||"").slice(0,10)===dateStr&&l.status==='approved');
-    if(isHalfDay&&rec&&rec.check_in_time) return {type:"half_day",label:"HD",color:"#7c3aed",bg:"#ede9fe",rec};
-    if(isHalfDay) return {type:"half_day",label:"HD",color:"#7c3aed",bg:"#ede9fe",rec:null};
     if (rec && rec.check_in_time) {
       return rec.is_late
         ? { type: "late", label: `L${rec.late_mins || ""}`, color: "#d97706", bg: "#fef3c7", rec }
@@ -1755,8 +1759,7 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
       });
       notify("Attendance cleared");
       await loadRecords();
-    } catch (err) { notify(err.message, "error"); setRecords([]); setLeaves([]); }
-    finally { setLoading(false); }
+    } catch (err) { notify(err.message, "error"); }
   };
 
   const getDaysInMonth = () => {
@@ -1965,14 +1968,12 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
                 Cancel
               </button>
             </div>
-            <button
-              onClick={async()=>{
+            <button onClick={async()=>{
                 if(!editForm.notes||!editForm.notes.trim()){notify("Reason required","error");return;}
-                if(!window.confirm("Mark "+editRec.employee_name+" as ABSENT on "+editRec.date+"? This deletes their attendance.")) return;
+                if(!window.confirm("Mark "+editRec.employee_name+" as ABSENT on "+editRec.date+"?")) return;
                 try{await POST("/api/attendance/admin-mark",{employee_id:editRec.employee_id,date:editRec.date,notes:editForm.notes,clear:true});notify("Marked absent ✓");setEditRec(null);await loadRecords();}
                 catch(e){notify(e.message,"error");}
-              }}
-              style={{width:"100%",background:"#ef4444",border:"none",borderRadius:14,color:"#fff",padding:"12px",fontSize:13,fontWeight:700,cursor:"pointer",marginBottom:8}}>
+              }} style={{width:"100%",background:"#ef4444",border:"none",borderRadius:14,color:"#fff",padding:"12px",fontSize:13,fontWeight:700,cursor:"pointer",marginBottom:8}}>
               🚫 Mark as Absent
             </button>
             {editRec?.is_early_checkout&&!editRec?.early_penalty_waived&&(
@@ -2048,7 +2049,6 @@ function AdminLeaveHistory({ user, notify, activeOrgId }) {
       await PATCH(`/api/leaves/${editLeave.id}`, editForm);
       notify("Leave updated ✓"); setEditLeave(null); load();
     } catch (err) { notify(err.message, "error"); }
-    finally { setLoading(false); }
   };
 
   let list = leaves;
@@ -4153,10 +4153,10 @@ function SalaryAdjustmentManager({notify, activeOrgId}) {
   const now = new Date();
   const [selMonth, setSelMonth] = useState(now.getFullYear()+"-"+pad(now.getMonth()+1));
   const [adjustments, setAdjustments] = useState([]);
-  const [form, setForm] = useState({amount:"", type:"deduction", reason:""});
+  const [form, setForm] = useState({amount:"",type:"deduction",reason:""});
   const fv=(k,v)=>setForm(p=>({...p,[k]:v}));
   useEffect(()=>{if(activeOrgId)GET("/api/employees",{org_id:activeOrgId}).then(e=>setEmployees(e||[])).catch(()=>{});},[activeOrgId]);
-  const load=async()=>{
+  const load=()=>{
     if(!selEmp)return;
     const[y,m]=selMonth.split("-").map(Number);
     GET("/api/salary-adjustments",{employee_id:selEmp,year:y,month:m,org_id:activeOrgId}).then(r=>setAdjustments(r||[])).catch(()=>{});
@@ -4179,7 +4179,7 @@ function SalaryAdjustmentManager({notify, activeOrgId}) {
         {employees.map(e=><option key={e.id} value={e.id}>{e.name} — {e.branch_name||""}</option>)}
       </select>
       <input style={{...S.input,marginBottom:16}} type="month" value={selMonth} onChange={e=>setSelMonth(e.target.value)}/>
-      {adjustments.length>0&&<div style={{background:netAdj>=0?C.g50:"#fee2e2",borderRadius:14,padding:14,marginBottom:16,border:`1px solid ${netAdj>=0?C.g300:"#fca5a5"}`}}><p style={{color:netAdj>=0?C.g700:C.red,fontWeight:800}}>Net: {netAdj>=0?"+":""}{fmt(netAdj)}</p></div>}
+      {adjustments.length>0&&<div style={{background:netAdj>=0?C.g50:"#fee2e2",borderRadius:14,padding:14,marginBottom:16}}><p style={{color:netAdj>=0?C.g700:C.red,fontWeight:800}}>Net: {netAdj>=0?"+":""}{fmt(netAdj)}</p></div>}
       <div style={{background:C.white,borderRadius:16,padding:16,marginBottom:16,boxShadow:`0 2px 8px ${C.g300}33`}}>
         <p style={{color:C.g800,fontWeight:800,marginBottom:12}}>Add adjustment</p>
         <select style={{...S.select,marginBottom:8}} value={form.type} onChange={e=>fv("type",e.target.value)}>
@@ -4199,78 +4199,7 @@ function SalaryAdjustmentManager({notify, activeOrgId}) {
           </div>
         </div>
       ))}
-      {adjustments.length===0&&selEmp&&<p style={{color:C.gr500,textAlign:"center",padding:20}}>No adjustments this month</p>}
-    </div>
-  );
-}
-
-
-function SalarySlip({user, notify}) {
-  const now = new Date();
-  const [selMonth, setSelMonth] = useState(now.getFullYear()+"-"+pad(now.getMonth()+1));
-  const [slip, setSlip] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const MONTHS=["January","February","March","April","May","June","July","August","September","October","November","December"];
-  const f2=n=>"₹"+Number(n||0).toLocaleString("en-IN",{minimumFractionDigits:2});
-
-  const load=async()=>{
-    setLoading(true);
-    const[y,m]=selMonth.split("-").map(Number);
-    try{const d=await GET("/api/salary-slip",{year:y,month:m});setSlip(d);}
-    catch(e){notify(e.message,"error");}
-    finally{setLoading(false);}
-  };
-
-  const print=()=>{
-    if(!slip)return;
-    const[y,m]=selMonth.split("-").map(Number);
-    const html="<html><head><title>Salary Slip</title><style>body{font-family:Arial;padding:20px;color:#111}h2{color:#166534}table{width:100%;border-collapse:collapse}td{padding:8px;border-bottom:1px solid #eee}td:last-child{text-align:right}.net{background:#166534;color:#fff;font-weight:900;font-size:18px}.footer{margin-top:30px;display:flex;justify-content:space-between}</style></head><body>"
-      +"<h2>"+slip.employee.org_name+"</h2><h3>Salary Slip — "+MONTHS[m-1]+" "+y+"</h3>"
-      +"<p><b>"+slip.employee.name+"</b> | "+(slip.employee.designation||"")+" | "+(slip.employee.branch_name||"")+"</p>"
-      +"<p>Code: "+(slip.employee.employee_code||"—")+" | Category: "+(slip.employee.job_category||"—")+"</p><hr/>"
-      +"<table><tr><td>Basic Salary</td><td>"+f2(slip.earnings.salary)+"</td></tr>"
-      +"<tr><td>Days Present / Total</td><td>"+slip.attendance.presentDays+" / "+slip.period.divisor+"</td></tr>"
-      +"<tr><td>Half Days</td><td>"+slip.attendance.halfDays+"</td></tr>"
-      +"<tr><td><b>Gross Earned</b></td><td><b>"+f2(slip.earnings.earnedGross)+"</b></td></tr>"
-      +"<tr><td colspan=2 style='background:#f3f4f6;font-weight:700;font-size:12px'>DEDUCTIONS</td></tr>"
-      +"<tr><td>Late penalty</td><td>-"+f2(slip.deductions.lateDeduction)+"</td></tr>"
-      +"<tr><td>Half day deduction</td><td>-"+f2(slip.deductions.halfDayDeduction)+"</td></tr>"
-      +"<tr><td>Leave deduction</td><td>-"+f2(slip.deductions.leaveDeduction)+"</td></tr>"
-      +"<tr><td>Early checkout</td><td>-"+f2(slip.deductions.earlyDeduction)+"</td></tr>"
-      +"<tr><td>Advance recovery</td><td>-"+f2(slip.deductions.advanceDeduction)+"</td></tr>"
-      +(slip.deductions.adjDeduction>0?"<tr><td>Manual deduction</td><td>-"+f2(slip.deductions.adjDeduction)+"</td></tr>":"")
-      +(slip.deductions.adjBonus>0?"<tr><td>Bonus</td><td>+"+f2(slip.deductions.adjBonus)+"</td></tr>":"")
-      +"<tr class='net'><td>NET PAYABLE</td><td>"+f2(slip.netEarned)+"</td></tr></table>"
-      +"<div class='footer'><div style='text-align:center;border-top:1px solid #000;padding-top:6px;width:180px'>Employee Signature</div><div style='text-align:center;border-top:1px solid #000;padding-top:6px;width:180px'>Authorised Signatory</div></div>"
-      +"</body></html>";
-    const w=window.open("","_blank");
-    if(w){w.document.write(html);w.document.close();setTimeout(()=>w.print(),500);}
-  };
-
-  return(
-    <div style={{background:C.white,borderRadius:20,padding:20,marginTop:16,boxShadow:`0 2px 10px ${C.g300}33`}}>
-      <p style={{color:C.g800,fontWeight:800,fontSize:15,marginBottom:12}}>📄 Salary Slip</p>
-      <div style={{display:"flex",gap:8,marginBottom:12}}>
-        <input style={{...S.input,flex:1,marginBottom:0}} type="month" value={selMonth} onChange={e=>setSelMonth(e.target.value)}/>
-        <button style={{...S.btn,width:"auto",padding:"0 16px"}} onClick={load} disabled={loading}>{loading?"Loading...":"Generate"}</button>
-      </div>
-      {slip&&(
-        <>
-          <div style={{background:C.g50,borderRadius:14,padding:14,marginBottom:12}}>
-            <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
-              <p style={{color:C.g800,fontWeight:800}}>{slip.employee.name}</p>
-              <p style={{color:C.g600,fontWeight:900,fontSize:18}}>{f2(slip.netEarned)}</p>
-            </div>
-            {[["Gross earned",f2(slip.earnings.earnedGross)],["Half days",String(slip.attendance.halfDays)],["Late penalty","-"+f2(slip.deductions.lateDeduction)],["Leave deduction","-"+f2(slip.deductions.leaveDeduction)],["Early checkout","-"+f2(slip.deductions.earlyDeduction)],["Advance","-"+f2(slip.deductions.advanceDeduction)],...(slip.deductions.adjBonus>0?[["Bonus","+"+f2(slip.deductions.adjBonus)]]:[]),...(slip.deductions.adjDeduction>0?[["Manual deduction","-"+f2(slip.deductions.adjDeduction)]]:[])].map(([l,v])=>(
-              <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"4px 0",borderBottom:`1px solid ${C.g100}`}}>
-                <p style={{color:C.gr500,fontSize:12}}>{l}</p>
-                <p style={{color:C.gr700,fontSize:12,fontWeight:600}}>{v}</p>
-              </div>
-            ))}
-          </div>
-          <button style={{...S.btn,background:"#7c3aed"}} onClick={print}>🖨 Print / Download PDF</button>
-        </>
-      )}
+      {adjustments.length===0&&selEmp&&<p style={{color:C.gr500,textAlign:"center",padding:20}}>No adjustments</p>}
     </div>
   );
 }
