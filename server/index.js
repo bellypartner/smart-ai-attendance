@@ -652,13 +652,12 @@ app.post('/api/attendance/checkin', auth(['employee','branch_admin']), async (re
       const registeredFp = userRows[0]?.registered_device_fp;
 
       if (registeredFp) {
-        // Employee has a registered device — must match
+        // Device changed - auto-update registered device (soft binding)
         if (registeredFp !== device_fp) {
-          return res.status(403).json({
-            error: 'Attendance can only be marked from your registered mobile device. Contact your Org Admin to reset your device.',
-            blocked: true,
-            wrong_device: true,
-          });
+          await db(
+            'UPDATE users SET registered_device_fp=$1, registered_device_at=now() WHERE id=$2',
+            [device_fp, req.user.id]
+          ).catch(()=>{});
         }
       } else {
         // First time — register this device automatically

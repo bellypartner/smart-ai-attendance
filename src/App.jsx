@@ -425,8 +425,8 @@ function EmpHome({user, branch, todayAtt, loading, onScan}) {
             {isMobile()
         ? <button onClick={onScan} disabled={status==="done"||loading}
         style={{width:"100%",background:status==="done"?C.gr300:`linear-gradient(135deg,${C.g700},${C.g500})`,border:"none",borderRadius:20,padding:"20px",cursor:status==="done"?"not-allowed":"pointer",color:C.white,display:"flex",flexDirection:"column",alignItems:"center",gap:6,animation:status!=="done"?"glow 3s infinite":"none",marginBottom:18}}>
-        <span style={{fontSize:32}}>📷</span>
-        <span style={{fontSize:16,fontWeight:800}}>{status==="out"?"Scan to Check In — Shift 1":status==="in"?"Scan to Check Out":status==="between"?"Scan to Check In — Shift 2":"Day Complete ✓"}</span>
+        <span style={{fontSize:32}}>📍</span>
+        <span style={{fontSize:16,fontWeight:800}}>{status==="out"?"Mark Check In":status==="in"?"Mark Check Out":status==="between"?"Mark Check In — Shift 2":"Day Complete ✓"}</span>
         <span style={{fontSize:12,opacity:0.75}}>Geo-fenced · Tap to mark attendance</span>
       </button>
         : (status!=="done"&&<div style={{background:"#f0faf4",border:"1.5px dashed #86efac",borderRadius:18,padding:"20px",textAlign:"center",marginBottom:18}}>
