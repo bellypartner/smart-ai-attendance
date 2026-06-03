@@ -294,6 +294,7 @@ app.get('/api/employees', auth(['super_admin', 'org_admin', 'branch_admin']), as
              m.name AS manager_name
       FROM users u
       LEFT JOIN branches b ON b.id = u.branch_id
+      LEFT JOIN job_categories jc ON jc.id = u.job_category_id
       LEFT JOIN shift_templates st ON st.id = u.default_shift_id
       LEFT JOIN users m ON m.id = u.manager_id
       WHERE u.org_id = $1
@@ -1057,8 +1058,7 @@ app.get('/api/my-salary', auth(['employee','branch_admin']), async (req, res) =>
       db(`SELECT COALESCE(SUM(monthly_recovery),0) AS monthly_deduction
           FROM salary_advances
           WHERE employee_id=$1 AND status IN ('recovering','approved')
-            AND COALESCE(disbursed_at, approved_at, created_at)::date
-              <= (make_date($2,$3,10))`, [req.user.id, y, m]),
+            AND created_at::date <= (make_date($2,$3,10))`, [req.user.id, y, m]),
     ]);
 
     const s = settRows[0] || {};
@@ -1176,7 +1176,9 @@ app.get('/api/salary-report', auth(['super_admin', 'org_admin', 'branch_admin'])
       const leaveDeductions = unauthLeaves * (s.unauth_leave_penalty || 200);
       const noShowDeductions = noShows * (s.no_show_penalty || 250);
       // Include advance deductions
-      const { rows: empAdvRows } = await db(`SELECT COALESCE(SUM(monthly_recovery),0) AS adv FROM salary_advances WHERE employee_id=$1 AND status='recovering'`, [emp.id]).catch(()=>({rows:[{adv:0}]}));
+      const { rows: empAdvRows } = await db(`SELECT COALESCE(SUM(monthly_recovery),0) AS adv FROM salary_advances WHERE employee_id=$1 AND status IN ('recovering','approved')
+          AND created_at::date <= make_date($2,$3,COALESCE($4,10))`,
+        [emp.id, y, m, parseInt(st?.salary_process_day||s?.salary_process_day||10)]).catch(()=>({rows:[{adv:0}]}));
       const advDeduction = Number(empAdvRows[0]?.adv || 0);
       // Include salary adjustments
       const { rows: empAdjRows } = await db(`SELECT COALESCE(SUM(CASE WHEN type='bonus' THEN amount ELSE 0 END),0) AS bonus, COALESCE(SUM(CASE WHEN type!='bonus' THEN amount ELSE 0 END),0) AS deductions FROM salary_adjustments WHERE employee_id=$1 AND year=$2 AND month=$3`, [emp.id, y, m]).catch(()=>({rows:[{bonus:0,deductions:0}]}));
@@ -1962,7 +1964,7 @@ app.get('/api/salary-slip', auth(), async (req, res) => {
       db("SELECT * FROM leaves WHERE employee_id=$1 AND date BETWEEN $2::date AND $3::date AND status='approved'",[empId,from,to]),
       db(`SELECT COALESCE(SUM(monthly_recovery),0) AS adv FROM salary_advances
           WHERE employee_id=$1 AND status IN ('recovering','approved')
-          AND COALESCE(disbursed_at,approved_at,created_at)::date <= make_date($2,$3,$4)`,
+          AND created_at::date <= make_date($2,$3,$4)`,
         [empId,y,m,processDay]).catch(()=>({rows:[{adv:0}]})),
       db('SELECT * FROM salary_adjustments WHERE employee_id=$1 AND year=$2 AND month=$3 ORDER BY created_at',[empId,y,m]).catch(()=>({rows:[]})),
     ]);
