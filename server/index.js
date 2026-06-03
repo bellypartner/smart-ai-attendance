@@ -294,7 +294,6 @@ app.get('/api/employees', auth(['super_admin', 'org_admin', 'branch_admin']), as
              m.name AS manager_name
       FROM users u
       LEFT JOIN branches b ON b.id = u.branch_id
-       LEFT JOIN job_categories jc ON jc.id = u.job_category_id
       LEFT JOIN shift_templates st ON st.id = u.default_shift_id
       LEFT JOIN users m ON m.id = u.manager_id
       WHERE u.org_id = $1
@@ -652,12 +651,10 @@ app.post('/api/attendance/checkin', auth(['employee','branch_admin']), async (re
       const registeredFp = userRows[0]?.registered_device_fp;
 
       if (registeredFp) {
-        // Device changed - auto-update registered device (soft binding)
+        // Auto-update device fp if changed (browser update etc)
         if (registeredFp !== device_fp) {
-          await db(
-            'UPDATE users SET registered_device_fp=$1, registered_device_at=now() WHERE id=$2',
-            [device_fp, req.user.id]
-          ).catch(()=>{});
+          await db('UPDATE users SET registered_device_fp=$1, registered_device_at=now() WHERE id=$2',
+            [device_fp, req.user.id]).catch(()=>{});
         }
       } else {
         // First time — register this device automatically
@@ -1058,7 +1055,10 @@ app.get('/api/my-salary', auth(['employee','branch_admin']), async (req, res) =>
       db('SELECT * FROM leaves WHERE employee_id=$1 AND date BETWEEN $2::date AND $3::date', [req.user.id, from, to]),
       db('SELECT salary, working_days_type FROM users WHERE id=$1', [req.user.id]),
       db(`SELECT COALESCE(SUM(monthly_recovery),0) AS monthly_deduction
-          FROM salary_advances WHERE employee_id=$1 AND status='recovering'`, [req.user.id]),
+          FROM salary_advances
+          WHERE employee_id=$1 AND status IN ('recovering','approved')
+            AND COALESCE(disbursed_at, approved_at, created_at)::date
+              <= (make_date($2,$3,10))`, [req.user.id, y, m]),
     ]);
 
     const s = settRows[0] || {};
@@ -1934,45 +1934,7 @@ app.post('/api/cron/auto-checkout', async (req, res) => {
 });
 
 
-// ============================================================
-// SALARY ADJUSTMENTS
-// ============================================================
-app.get('/api/salary-adjustments', auth(['super_admin','org_admin','branch_admin']), async (req, res) => {
-  try {
-    const oid = req.query.org_id || orgId(req);
-    const { employee_id, year, month } = req.query;
-    const params = [oid];
-    let sql = `SELECT sa.*, u.name AS employee_name, cb.name AS created_by_name
-      FROM salary_adjustments sa JOIN users u ON u.id=sa.employee_id
-      LEFT JOIN users cb ON cb.id=sa.created_by WHERE sa.org_id=$1`;
-    if(employee_id){params.push(employee_id);sql+=` AND sa.employee_id=$${params.length}`;}
-    if(year){params.push(parseInt(year));sql+=` AND sa.year=$${params.length}`;}
-    if(month){params.push(parseInt(month));sql+=` AND sa.month=$${params.length}`;}
-    sql+=' ORDER BY sa.created_at DESC LIMIT 100';
-    const { rows } = await db(sql, params);
-    res.json(rows);
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-app.post('/api/salary-adjustments', auth(['super_admin','org_admin']), async (req, res) => {
-  try {
-    const oid = orgId(req);
-    const { employee_id, amount, type, reason, year, month } = req.body;
-    if(!reason?.trim()) return res.status(400).json({ error: 'Reason required' });
-    const { rows } = await db(`INSERT INTO salary_adjustments (org_id,employee_id,amount,type,reason,year,month,created_by)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-      [oid, employee_id, Number(amount), type||'deduction', reason, parseInt(year), parseInt(month), req.user.id]);
-    res.json(rows[0]);
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-app.delete('/api/salary-adjustments/:id', auth(['super_admin','org_admin']), async (req, res) => {
-  try { await db('DELETE FROM salary_adjustments WHERE id=$1', [req.params.id]); res.json({ ok: true }); }
-  catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-
-// ============================================================
-// SALARY SLIP
-// ============================================================
+// ── SALARY SLIP ───────────────────────────────────────────────
 app.get('/api/salary-slip', auth(), async (req, res) => {
   try {
     const { year, month, employee_id } = req.query;
@@ -1980,10 +1942,10 @@ app.get('/api/salary-slip', auth(), async (req, res) => {
     const m = parseInt(month || (new Date().getMonth()+1));
     const empId = employee_id || req.user.id;
     if(empId !== req.user.id && !['super_admin','org_admin','branch_admin'].includes(req.user.role))
-      return res.status(403).json({ error: 'Forbidden' });
+      return res.status(403).json({ error:'Forbidden' });
     const from = `${y}-${String(m).padStart(2,'0')}-01`;
     const to = new Date(y,m,0).toISOString().split('T')[0];
-    const { rows: empRows } = await db(`
+    const { rows:[emp] } = await db(`
       SELECT u.*, b.name AS branch_name, o.name AS org_name,
              jc.name AS job_category_name, jc.working_days_type AS cat_working_days,
              jc.cl_per_month, jc.sl_per_month
@@ -1991,68 +1953,92 @@ app.get('/api/salary-slip', auth(), async (req, res) => {
       LEFT JOIN organizations o ON o.id=u.org_id
       LEFT JOIN job_categories jc ON jc.id=u.job_category_id
       WHERE u.id=$1`, [empId]);
-    if(!empRows[0]) return res.status(404).json({ error: 'Not found' });
-    const emp = empRows[0];
-    const { rows: settRows } = await db('SELECT * FROM org_settings WHERE org_id=$1', [emp.org_id]);
-    const s = settRows[0] || {};
-    const { rows: att } = await db(
-      'SELECT * FROM attendance_records WHERE employee_id=$1 AND date BETWEEN $2::date AND $3::date ORDER BY date',
-      [empId, from, to]);
-    const { rows: lvs } = await db(
-      "SELECT * FROM leaves WHERE employee_id=$1 AND date BETWEEN $2::date AND $3::date AND status='approved'",
-      [empId, from, to]);
-    const { rows: advRows } = await db(
-      "SELECT COALESCE(SUM(monthly_recovery),0) AS monthly_deduction FROM salary_advances WHERE employee_id=$1 AND status='recovering'",
-      [empId]);
-    const { rows: adjRows } = await db(
-      "SELECT * FROM salary_adjustments WHERE employee_id=$1 AND year=$2 AND month=$3 ORDER BY created_at",
-      [empId, y, m]).catch(()=>({rows:[]}));
-    const salary = Number(emp.salary||0);
-    const divisor = Number(emp.cat_working_days || s.working_days_per_month || 30);
-    const dailyRate = salary/divisor;
-    const hourlyRate = dailyRate/8;
-    const presentDays = att.filter(a=>a.check_in_time).length;
-    const lateDays = att.filter(a=>a.is_late).length;
-    const halfDays = lvs.filter(l=>l.type==='half_day').length;
-    const clUsed = lvs.filter(l=>l.type==='casual').length;
-    const slUsed = lvs.filter(l=>l.type==='sick').length;
-    const unauthLeaves = lvs.filter(l=>l.type==='unauthorized').length;
-    const earlyOuts = att.filter(a=>a.is_early_checkout&&!a.early_penalty_waived);
-    const earlyMinsTotal = earlyOuts.reduce((s,a)=>s+Number(a.early_mins||0),0);
-    const clAllowed = Number(emp.cl_per_month||0);
-    const slAllowed = Number(emp.sl_per_month||0);
-    const clExcess = Math.max(0,clUsed-clAllowed);
-    const slExcess = Math.max(0,slUsed-slAllowed);
-    const earnedGross = presentDays*dailyRate;
-    const monthlyGrace = s.monthly_grace_days||3;
-    const normalLates = Math.min(lateDays,monthlyGrace);
-    const excessLates = Math.max(0,lateDays-monthlyGrace);
-    const lateDeduction = normalLates*(s.late_deduction_per_occ||50)+excessLates*(s.excess_late_deduction||100);
-    const halfDayDeduction = halfDays*(dailyRate/2);
-    const leaveDeduction = (unauthLeaves+clExcess+slExcess)*dailyRate;
-    const earlyDeduction = earlyOuts.length*(s.early_checkout_flat_penalty||50)+Math.round((earlyMinsTotal/60)*hourlyRate);
-    const advanceDeduction = Number(advRows[0]?.monthly_deduction||0);
-    const adjBonus = adjRows.filter(a=>a.type==='bonus').reduce((s,a)=>s+Number(a.amount),0);
-    const adjDeduction = adjRows.filter(a=>a.type!=='bonus').reduce((s,a)=>s+Number(a.amount),0);
-    const totalDeductions = lateDeduction+halfDayDeduction+leaveDeduction+earlyDeduction+advanceDeduction+adjDeduction;
-    const netEarned = Math.max(0,earnedGross-totalDeductions)+adjBonus;
+    if(!emp) return res.status(404).json({error:'Not found'});
+    const { rows:[s] } = await db('SELECT * FROM org_settings WHERE org_id=$1',[emp.org_id]);
+    const st = s||{};
+    const processDay = parseInt(st.salary_process_day||10);
+    const [attR, lvsR, advR, adjR] = await Promise.all([
+      db('SELECT * FROM attendance_records WHERE employee_id=$1 AND date BETWEEN $2::date AND $3::date ORDER BY date',[empId,from,to]),
+      db("SELECT * FROM leaves WHERE employee_id=$1 AND date BETWEEN $2::date AND $3::date AND status='approved'",[empId,from,to]),
+      db(`SELECT COALESCE(SUM(monthly_recovery),0) AS adv FROM salary_advances
+          WHERE employee_id=$1 AND status IN ('recovering','approved')
+          AND COALESCE(disbursed_at,approved_at,created_at)::date <= make_date($2,$3,$4)`,
+        [empId,y,m,processDay]).catch(()=>({rows:[{adv:0}]})),
+      db('SELECT * FROM salary_adjustments WHERE employee_id=$1 AND year=$2 AND month=$3 ORDER BY created_at',[empId,y,m]).catch(()=>({rows:[]})),
+    ]);
+    const att=attR.rows, lvs=lvsR.rows, adjRows=adjR.rows;
+    const salary=Number(emp.salary||0), divisor=Number(emp.cat_working_days||st.working_days_per_month||30);
+    const dailyRate=salary/divisor, hourlyRate=dailyRate/8;
+    const presentDays=att.filter(a=>a.check_in_time).length;
+    const lateDays=att.filter(a=>a.is_late).length;
+    const halfDays=lvs.filter(l=>l.type==='half_day').length;
+    const clUsed=lvs.filter(l=>l.type==='casual').length;
+    const slUsed=lvs.filter(l=>l.type==='sick').length;
+    const unauthLeaves=lvs.filter(l=>l.type==='unauthorized').length;
+    const earlyOuts=att.filter(a=>a.is_early_checkout&&!a.early_penalty_waived);
+    const earlyMins=earlyOuts.reduce((s,a)=>s+Number(a.early_mins||0),0);
+    const clAllowed=Number(emp.cl_per_month||0), slAllowed=Number(emp.sl_per_month||0);
+    const clExcess=Math.max(0,clUsed-clAllowed), slExcess=Math.max(0,slUsed-slAllowed);
+    const earnedGross=presentDays*dailyRate;
+    const grace=st.monthly_grace_days||3;
+    const normalLates=Math.min(lateDays,grace), excessLates=Math.max(0,lateDays-grace);
+    const lateDeduct=normalLates*(st.late_deduction_per_occ||50)+excessLates*(st.excess_late_deduction||100);
+    const halfDeduct=halfDays*(dailyRate/2);
+    const leaveDeduct=(unauthLeaves+clExcess+slExcess)*dailyRate;
+    const earlyDeduct=earlyOuts.length*(st.early_checkout_flat_penalty||50)+Math.round((earlyMins/60)*hourlyRate);
+    const advDeduct=Number(advR.rows[0]?.adv||0);
+    const adjBonus=adjRows.filter(a=>a.type==='bonus').reduce((s,a)=>s+Number(a.amount),0);
+    const adjDeduct=adjRows.filter(a=>a.type!=='bonus').reduce((s,a)=>s+Number(a.amount),0);
+    const totalDeduct=lateDeduct+halfDeduct+leaveDeduct+earlyDeduct+advDeduct+adjDeduct;
+    const netEarned=Math.max(0,earnedGross-totalDeduct)+adjBonus;
+    const r=n=>Math.round(n*100)/100;
     res.json({
       employee:{name:emp.name,designation:emp.designation,employee_code:emp.employee_code,
         branch_name:emp.branch_name,org_name:emp.org_name,date_of_joining:emp.date_of_joining,
         job_category:emp.job_category_name},
-      period:{year:y,month:m,from,to,divisor},
+      period:{year:y,month:m,from,to,divisor,processDay},
       attendance:{presentDays,absentDays:divisor-presentDays,lateDays,halfDays,totalDays:divisor},
       leaves:{clUsed,clAllowed,clExcess,slUsed,slAllowed,slExcess,unauthLeaves},
-      earnings:{salary,dailyRate:Math.round(dailyRate*100)/100,earnedGross:Math.round(earnedGross*100)/100},
-      deductions:{lateDeduction:Math.round(lateDeduction*100)/100,normalLates,excessLates,
-        monthlyGraceDays:monthlyGrace,halfDayDeduction:Math.round(halfDayDeduction*100)/100,
-        leaveDeduction:Math.round(leaveDeduction*100)/100,earlyDeduction:Math.round(earlyDeduction*100)/100,
-        earlyCheckouts:earlyOuts.length,advanceDeduction:Math.round(advanceDeduction*100)/100,
-        adjDeduction:Math.round(adjDeduction*100)/100,adjBonus:Math.round(adjBonus*100)/100,
-        adjustments:adjRows,totalDeductions:Math.round(totalDeductions*100)/100},
-      netEarned:Math.round(netEarned*100)/100,
+      earnings:{salary,dailyRate:r(dailyRate),earnedGross:r(earnedGross)},
+      deductions:{lateDeduct:r(lateDeduct),normalLates,excessLates,monthlyGrace:grace,
+        halfDeduct:r(halfDeduct),leaveDeduct:r(leaveDeduct),earlyDeduct:r(earlyDeduct),
+        earlyCheckouts:earlyOuts.length,advDeduct:r(advDeduct),adjDeduct:r(adjDeduct),
+        adjBonus:r(adjBonus),adjustments:adjRows,totalDeduct:r(totalDeduct)},
+      netEarned:r(netEarned),
     });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+  } catch(e){res.status(500).json({error:e.message});}
+});
+
+
+// ── SALARY ADJUSTMENTS ────────────────────────────────────────
+app.get('/api/salary-adjustments', auth(['super_admin','org_admin','branch_admin']), async (req,res) => {
+  try {
+    const oid=req.query.org_id||orgId(req);
+    const{employee_id,year,month}=req.query;
+    const params=[oid]; let sql=`SELECT sa.*,u.name AS employee_name,cb.name AS created_by_name
+      FROM salary_adjustments sa JOIN users u ON u.id=sa.employee_id
+      LEFT JOIN users cb ON cb.id=sa.created_by WHERE sa.org_id=$1`;
+    if(employee_id){params.push(employee_id);sql+=` AND sa.employee_id=$${params.length}`;}
+    if(year){params.push(parseInt(year));sql+=` AND sa.year=$${params.length}`;}
+    if(month){params.push(parseInt(month));sql+=` AND sa.month=$${params.length}`;}
+    sql+=' ORDER BY sa.created_at DESC LIMIT 100';
+    const{rows}=await db(sql,params);res.json(rows);
+  }catch(e){res.status(500).json({error:e.message});}
+});
+app.post('/api/salary-adjustments', auth(['super_admin','org_admin']), async (req,res) => {
+  try {
+    const oid=orgId(req);
+    const{employee_id,amount,type,reason,year,month}=req.body;
+    if(!reason?.trim()) return res.status(400).json({error:'Reason required'});
+    const{rows}=await db(`INSERT INTO salary_adjustments (org_id,employee_id,amount,type,reason,year,month,created_by)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [oid,employee_id,Number(amount),type||'deduction',reason,parseInt(year),parseInt(month),req.user.id]);
+    res.json(rows[0]);
+  }catch(e){res.status(500).json({error:e.message});}
+});
+app.delete('/api/salary-adjustments/:id', auth(['super_admin','org_admin']), async (req,res) => {
+  try{await db('DELETE FROM salary_adjustments WHERE id=$1',[req.params.id]);res.json({ok:true});}
+  catch(e){res.status(500).json({error:e.message});}
 });
 
 // ============================================================
