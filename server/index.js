@@ -1055,7 +1055,7 @@ app.get('/api/my-salary', auth(['employee','branch_admin']), async (req, res) =>
       db('SELECT * FROM attendance_records WHERE employee_id=$1 AND date BETWEEN $2 AND $3', [req.user.id, from, to]),
       db('SELECT * FROM leaves WHERE employee_id=$1 AND date BETWEEN $2::date AND $3::date', [req.user.id, from, to]),
       db('SELECT salary, working_days_type FROM users WHERE id=$1', [req.user.id]),
-      db(`SELECT COALESCE(SUM(monthly_recovery),0) AS monthly_deduction
+      db(`SELECT COALESCE(SUM(amount),0) AS monthly_deduction
           FROM salary_advances
           WHERE employee_id=$1 AND status IN ('recovering','approved')
             AND created_at::date <= (make_date($2,$3,10))`, [req.user.id, y, m]),
@@ -1176,8 +1176,7 @@ app.get('/api/salary-report', auth(['super_admin', 'org_admin', 'branch_admin'])
       const leaveDeductions = unauthLeaves * (s.unauth_leave_penalty || 200);
       const noShowDeductions = noShows * (s.no_show_penalty || 250);
       // Include advance deductions
-      const { rows: empAdvRows } = await db(`SELECT COALESCE(SUM(monthly_recovery),0) AS adv FROM salary_advances WHERE employee_id=$1 AND status IN ('recovering','approved')
-          AND created_at::date <= make_date($2,$3,COALESCE($4,10))`,
+      const { rows: empAdvRows } = await db(`SELECT COALESCE(SUM(amount),0) AS adv FROM salary_advances WHERE employee_id=$1 AND created_at::date <= make_date($2,$3,COALESCE($4,10))`,
         [emp.id, y, m, parseInt(s?.salary_process_day||10)]).catch(()=>({rows:[{adv:0}]}));
       const advDeduction = Number(empAdvRows[0]?.adv || 0);
       // Include salary adjustments
@@ -1962,8 +1961,8 @@ app.get('/api/salary-slip', auth(), async (req, res) => {
     const [attR, lvsR, advR, adjR] = await Promise.all([
       db('SELECT * FROM attendance_records WHERE employee_id=$1 AND date BETWEEN $2::date AND $3::date ORDER BY date',[empId,from,to]),
       db("SELECT * FROM leaves WHERE employee_id=$1 AND date BETWEEN $2::date AND $3::date",[empId,from,to]),
-      db(`SELECT COALESCE(SUM(monthly_recovery),0) AS adv FROM salary_advances
-          WHERE employee_id=$1 AND status IN ('recovering','approved')
+      db(`SELECT COALESCE(SUM(amount),0) AS adv FROM salary_advances
+          WHERE employee_id=$1
           AND created_at::date <= make_date($2,$3,$4)`,
         [empId,y,m,processDay]).catch(()=>({rows:[{adv:0}]})),
       db('SELECT * FROM salary_adjustments WHERE employee_id=$1 AND year=$2 AND month=$3 ORDER BY created_at',[empId,y,m]).catch(()=>({rows:[]})),
