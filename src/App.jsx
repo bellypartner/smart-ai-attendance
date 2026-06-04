@@ -1481,8 +1481,8 @@ function AdminQR({notify, activeOrgId}) {
 
 function AdminReports({user, notify, activeOrgId}) {
   const [report,setReport]=useState(null), [loading,setLoading]=useState(true);
-  const [slipPreview,setSlipPreview]=useState(null);
   const [selMonth,setSelMonth]=useState(()=>{const n=new Date();return n.getFullYear()+'-'+pad(n.getMonth()+1);});
+  const [slipPreview,setSlipPreview]=useState(null);
   const [filterBranch,setFilterBranch]=useState("all"), [filterStatus,setFilterStatus]=useState("all");
   const [branches,setBranches]=useState([]);
   const now=new Date();
@@ -1568,6 +1568,7 @@ function AdminReports({user, notify, activeOrgId}) {
 
   return(
     <div style={{padding:20}}>
+      <input type="month" value={selMonth} onChange={e=>setSelMonth(e.target.value)} style={{border:"1px solid #86efac",borderRadius:8,padding:"6px 10px",fontSize:13,marginBottom:12,display:"block"}}/>
       <h2 style={{color:C.g800,fontSize:22,fontWeight:800,marginBottom:4}}>Monthly Report</h2>
       <p style={{color:C.gr500,fontSize:13,marginBottom:16}}>{now.toLocaleDateString("en-IN",{month:"long",year:"numeric"})}</p>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
@@ -1611,7 +1612,7 @@ function AdminEditAtt({user, notify, activeOrgId}) {
   useEffect(()=>{
     if(!activeOrgId)return;
     GET("/api/employees",{org_id:activeOrgId}).then(e=>setEmployees(e||[])).finally(()=>setLoading(false));
-  },[activeOrgId]);
+  },[activeOrgId,selMonth]);
   const go=async()=>{
     if(!selEmp||!cin){notify("Employee and check-in required","error");return;}
     try{await POST("/api/attendance/admin-mark",{employee_id:selEmp,date:selDate,check_in_time:cin,check_out_time:cout||null,notes,org_id:activeOrgId});notify("Attendance saved ✓");}
