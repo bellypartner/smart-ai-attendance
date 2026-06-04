@@ -1961,7 +1961,7 @@ app.get('/api/salary-slip', auth(), async (req, res) => {
     const processDay = parseInt(st.salary_process_day||10);
     const [attR, lvsR, advR, adjR] = await Promise.all([
       db('SELECT * FROM attendance_records WHERE employee_id=$1 AND date BETWEEN $2::date AND $3::date ORDER BY date',[empId,from,to]),
-      db("SELECT * FROM leaves WHERE employee_id=$1 AND date BETWEEN $2::date AND $3::date AND status='approved'",[empId,from,to]),
+      db("SELECT * FROM leaves WHERE employee_id=$1 AND date BETWEEN $2::date AND $3::date",[empId,from,to]),
       db(`SELECT COALESCE(SUM(monthly_recovery),0) AS adv FROM salary_advances
           WHERE employee_id=$1 AND status IN ('recovering','approved')
           AND created_at::date <= make_date($2,$3,$4)`,
