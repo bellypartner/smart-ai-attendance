@@ -1568,9 +1568,8 @@ function AdminReports({user, notify, activeOrgId}) {
 
   return(
     <div style={{padding:20}}>
-      <input type="month" value={selMonth} onChange={e=>setSelMonth(e.target.value)} style={{border:"1px solid #86efac",borderRadius:8,padding:"6px 10px",fontSize:13,marginBottom:12,display:"block"}}/>
       <h2 style={{color:C.g800,fontSize:22,fontWeight:800,marginBottom:4}}>Monthly Report</h2>
-      <p style={{color:C.gr500,fontSize:13,marginBottom:16}}>{now.toLocaleDateString("en-IN",{month:"long",year:"numeric"})}</p>
+      <p style={{color:C.gr500,fontSize:13,marginBottom:16}}>{now.toLocaleDateString("en-IN",{month:"long",year:"numeric"})} Select Month<input type="month" value={selMonth} onChange={e=>setSelMonth(e.target.value)} style={{border:"1px solid #86efac",borderRadius:8,padding:"6px 10px",fontSize:13,marginBottom:12,display:"block"}}/> </p>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
         <div style={{background:C.g700,borderRadius:18,padding:16,textAlign:"center"}}>
           <p style={{color:"rgba(255,255,255,0.7)",fontSize:12}}>Total Payable</p>
