@@ -1178,7 +1178,7 @@ app.get('/api/salary-report', auth(['super_admin', 'org_admin', 'branch_admin'])
       // Include advance deductions
       const { rows: empAdvRows } = await db(`SELECT COALESCE(SUM(monthly_recovery),0) AS adv FROM salary_advances WHERE employee_id=$1 AND status IN ('recovering','approved')
           AND created_at::date <= make_date($2,$3,COALESCE($4,10))`,
-        [emp.id, y, m, parseInt(st?.salary_process_day||s?.salary_process_day||10)]).catch(()=>({rows:[{adv:0}]}));
+        [emp.id, y, m, parseInt(s?.salary_process_day||10)]).catch(()=>({rows:[{adv:0}]}));
       const advDeduction = Number(empAdvRows[0]?.adv || 0);
       // Include salary adjustments
       const { rows: empAdjRows } = await db(`SELECT COALESCE(SUM(CASE WHEN type='bonus' THEN amount ELSE 0 END),0) AS bonus, COALESCE(SUM(CASE WHEN type!='bonus' THEN amount ELSE 0 END),0) AS deductions FROM salary_adjustments WHERE employee_id=$1 AND year=$2 AND month=$3`, [emp.id, y, m]).catch(()=>({rows:[{bonus:0,deductions:0}]}));
