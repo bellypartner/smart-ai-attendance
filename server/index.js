@@ -1057,13 +1057,18 @@ app.get('/api/my-salary', auth(['employee','branch_admin']), async (req, res) =>
       db('SELECT salary, working_days_type FROM users WHERE id=$1', [req.user.id]),
       db(`SELECT COALESCE(SUM(amount),0) AS monthly_deduction
           FROM salary_advances
-          WHERE employee_id=$1 AND status IN ('recovering','approved')
-            AND created_at::date <= (make_date($2,$3,10))`, [req.user.id, y, m]),
+          WHERE employee_id=$1
+            AND created_at::date > make_date(
+              CASE WHEN $3=1 THEN $2-1 ELSE $2 END,
+            CASE WHEN $3=1 THEN 12 ELSE $3-1 END, 10)
+            AND created_at::date <= make_date(
+              CASE WHEN $3=12 THEN $2+1 ELSE $2 END,
+            CASE WHEN $3=12 THEN 1 ELSE $3+1 END, 10)`, [req.user.id, y, m]),
     ]);
 
     const s = settRows[0] || {};
     const salary = Number(uRows[0]?.salary || 0);
-    const workingDays = uRows[0]?.working_days_type || s.working_days_per_month || 26;
+    const workingDays = 30; // Fixed 30 days
     // Get job category for this employee
     const { rows: catRows } = await db(`
       SELECT jc.* FROM job_categories jc
@@ -1168,7 +1173,7 @@ app.get('/api/salary-report', auth(['super_admin', 'org_admin', 'branch_admin'])
       const unauthLeaves = lvs.filter(l => l.type === 'unauthorized').length;
       const noShows = lvs.filter(l => l.type === 'noshow').length;
       const casualUsed = lvs.filter(l => l.type === 'casual').length;
-      const wdm = emp.working_days_type || 30;
+      const wdm = 30; // Fixed 30 days
       const dailyRate = emp.salary / wdm;
       const earnedGross = presentDays * dailyRate;
       const excessLates = Math.max(0, lateDays - (s.max_allowed_lates_per_month || 3));
@@ -1176,7 +1181,13 @@ app.get('/api/salary-report', auth(['super_admin', 'org_admin', 'branch_admin'])
       const leaveDeductions = unauthLeaves * (s.unauth_leave_penalty || 200);
       const noShowDeductions = noShows * (s.no_show_penalty || 250);
       // Include advance deductions
-      const { rows: empAdvRows } = await db(`SELECT COALESCE(SUM(amount),0) AS adv FROM salary_advances WHERE employee_id=$1 AND created_at::date <= make_date($2,$3,COALESCE($4,10))`,
+      const { rows: empAdvRows } = await db(`SELECT COALESCE(SUM(amount),0) AS adv FROM salary_advances WHERE employee_id=$1
+          AND created_at::date > make_date(
+            CASE WHEN $3=1 THEN $2-1 ELSE $2 END,
+            CASE WHEN $3=1 THEN 12 ELSE $3-1 END, COALESCE($4,10))
+          AND created_at::date <= make_date(
+            CASE WHEN $3=12 THEN $2+1 ELSE $2 END,
+            CASE WHEN $3=12 THEN 1 ELSE $3+1 END, COALESCE($4,10))`,
         [emp.id, y, m, parseInt(s?.salary_process_day||10)]).catch(()=>({rows:[{adv:0}]}));
       const advDeduction = Number(empAdvRows[0]?.adv || 0);
       // Include salary adjustments
@@ -1963,7 +1974,12 @@ app.get('/api/salary-slip', auth(), async (req, res) => {
       db("SELECT * FROM leaves WHERE employee_id=$1 AND date BETWEEN $2::date AND $3::date",[empId,from,to]),
       db(`SELECT COALESCE(SUM(amount),0) AS adv FROM salary_advances
           WHERE employee_id=$1
-          AND created_at::date <= make_date($2,$3,$4)`,
+          AND created_at::date > make_date(
+            CASE WHEN $3=1 THEN $2-1 ELSE $2 END,
+            CASE WHEN $3=1 THEN 12 ELSE $3-1 END, $4)
+          AND created_at::date <= make_date(
+            CASE WHEN $3=12 THEN $2+1 ELSE $2 END,
+            CASE WHEN $3=12 THEN 1 ELSE $3+1 END, $4)`,
         [empId,y,m,processDay]).catch(()=>({rows:[{adv:0}]})),
       db('SELECT * FROM salary_adjustments WHERE employee_id=$1 AND year=$2 AND month=$3 ORDER BY created_at',[empId,y,m]).catch(()=>({rows:[]})),
     ]);
