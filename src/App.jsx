@@ -690,7 +690,6 @@ function AdminApp({user, notify, page, setPage, activeOrgId, setActiveOrgId, onL
     {k:"adm_shifts",i:"📅",l:"Shifts"},
     {k:"adm_override",i:"⚡",l:"Override"},
     {k:"adm_approvals",i:"✅",l:"Approvals"},
-    {k:"adm_qr",i:"📷",l:"QR"},
     ...(isSA||isOA?[{k:"adm_reports",i:"📊",l:"Reports"}]:[]),
     {k:"adm_settings",i:"⚙️",l:"Settings"},
     {k:"adm_att_table",i:"📊",l:"Att."},
@@ -1429,6 +1428,75 @@ function AdminReports({user, notify, activeOrgId}) {
   },[activeOrgId,selMonth]);
 
   if(loading) return <Spinner/>;
+  if(slipPreview) {
+    const sl=slipPreview;
+    const mn=["January","February","March","April","May","June","July","August","September","October","November","December"];
+    const f2=n=>"₹"+Number(n||0).toLocaleString("en-IN",{minimumFractionDigits:2});
+    const[sy,sm]=(selMonth||"").split('-').map(Number);
+    return(
+      <div style={{padding:20}}>
+        <div style={{display:"flex",justifyContent:"space-between",marginBottom:16}}>
+          <button onClick={()=>setSlipPreview(null)} style={{background:C.g100,border:"none",borderRadius:10,padding:"8px 16px",cursor:"pointer",color:C.g700,fontWeight:700}}>← Back</button>
+          <button onClick={()=>{
+            const html="<html><head><title>Salary Slip</title><style>body{font-family:Arial;padding:20px}h2{color:#166534}table{width:100%;border-collapse:collapse}td{padding:8px;border-bottom:1px solid #eee}td:last-child{text-align:right}.net{background:#166534;color:#fff;font-weight:900;font-size:18px}</style></head><body>"
+              +"<h2>"+(sl.employee?.org_name||"")+"</h2><h3>Salary Slip — "+(mn[sm-1]||"")+" "+sy+"</h3>"
+              +"<p><b>"+(sl.employee?.name||"")+"</b> | "+(sl.employee?.designation||"")+" | "+(sl.employee?.branch_name||"")+"</p>"
+              +"<p>Code: "+(sl.employee?.employee_code||"—")+"</p><hr/>"
+              +"<table><tr><td>Basic Salary</td><td>"+f2(sl.earnings?.salary)+"</td></tr>"
+              +"<tr><td>Days Present / "+(sl.period?.divisor||30)+"</td><td>"+(sl.attendance?.presentDays||0)+"</td></tr>"
+              +"<tr><td>Half Days</td><td>"+(sl.attendance?.halfDays||0)+"</td></tr>"
+              +"<tr><td><b>Gross Earned</b></td><td><b>"+f2(sl.earnings?.earnedGross)+"</b></td></tr>"
+              +"<tr><td colspan=2 style='background:#f3f4f6;font-weight:700;font-size:12px'>DEDUCTIONS</td></tr>"
+              +"<tr><td>Late Penalty</td><td>-"+f2(sl.deductions?.lateDeduct)+"</td></tr>"
+              +"<tr><td>Half Day</td><td>-"+f2(sl.deductions?.halfDeduct)+"</td></tr>"
+              +"<tr><td>Leave Deduction</td><td>-"+f2(sl.deductions?.leaveDeduct)+"</td></tr>"
+              +"<tr><td>Early Checkout</td><td>-"+f2(sl.deductions?.earlyDeduct)+"</td></tr>"
+              +"<tr><td>Advance Recovery</td><td>-"+f2(sl.deductions?.advDeduct)+"</td></tr>"
+              +((sl.deductions?.adjDeduct||0)>0?"<tr><td>Manual Deduction</td><td>-"+f2(sl.deductions?.adjDeduct)+"</td></tr>":"")
+              +((sl.deductions?.adjBonus||0)>0?"<tr><td>Bonus</td><td>+"+f2(sl.deductions?.adjBonus)+"</td></tr>":"")
+              +"<tr class='net'><td>NET PAYABLE</td><td>"+f2(sl.netEarned)+"</td></tr></table>"
+              +"<div style='margin-top:30px;display:flex;justify-content:space-between'>"
+              +"<div style='text-align:center;border-top:1px solid #000;padding-top:6px;width:180px'>Employee Signature</div>"
+              +"<div style='text-align:center;border-top:1px solid #000;padding-top:6px;width:180px'>Authorised Signatory</div></div>"
+              +"</body></html>";
+            const w=window.open("","_blank");
+            if(w){w.document.write(html);w.document.close();setTimeout(()=>w.print(),500);}
+          }} style={{background:"#7c3aed",border:"none",borderRadius:10,color:"#fff",padding:"8px 16px",cursor:"pointer",fontWeight:700}}>🖨 Print / PDF</button>
+        </div>
+        <div style={{background:C.white,borderRadius:20,padding:20,boxShadow:`0 2px 12px ${C.g300}44`}}>
+          <h2 style={{color:C.g800,textAlign:"center",fontWeight:900}}>{sl.employee?.org_name}</h2>
+          <p style={{textAlign:"center",color:C.gr500,marginBottom:16}}>Salary Slip — {mn[sm-1]} {sy}</p>
+          <div style={{background:C.g50,borderRadius:14,padding:14,marginBottom:16,display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            {[["Name",sl.employee?.name],["Designation",sl.employee?.designation||"—"],["Branch",sl.employee?.branch_name||"—"],["Code",sl.employee?.employee_code||"—"],["Category",sl.employee?.job_category||"—"],["Process Day",(sl.period?.processDay||10)+"th"]].map(([l,v])=>(
+              <div key={l}><p style={{color:C.gr400,fontSize:11}}>{l}</p><p style={{color:C.g800,fontWeight:700,fontSize:13}}>{v}</p></div>
+            ))}
+          </div>
+          {[["Basic Salary",f2(sl.earnings?.salary),false],
+            ["Days Present",(sl.attendance?.presentDays||0)+"/"+(sl.period?.divisor||30),false],
+            ["Half Days",(sl.attendance?.halfDays||0),false],
+            ["Gross Earned",f2(sl.earnings?.earnedGross),false],
+            ["Late Penalty","-"+f2(sl.deductions?.lateDeduct),true],
+            ["Half Day Deduction","-"+f2(sl.deductions?.halfDeduct),true],
+            ["Leave Deduction","-"+f2(sl.deductions?.leaveDeduct),true],
+            ["Early Checkout","-"+f2(sl.deductions?.earlyDeduct),true],
+            ["Advance Recovery","-"+f2(sl.deductions?.advDeduct),true],
+            ...((sl.deductions?.adjDeduct||0)>0?[["Manual Deduction","-"+f2(sl.deductions?.adjDeduct),true]]:[]),
+            ...((sl.deductions?.adjBonus||0)>0?[["Bonus","+"+f2(sl.deductions?.adjBonus),false]]:[]),
+          ].map(([l,v,d])=>(
+            <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${C.g50}`}}>
+              <p style={{color:C.gr600,fontSize:13}}>{l}</p>
+              <p style={{color:d?C.red:C.g800,fontSize:13,fontWeight:600}}>{v}</p>
+            </div>
+          ))}
+          <div style={{background:C.g700,borderRadius:12,padding:"14px 16px",marginTop:12,display:"flex",justifyContent:"space-between"}}>
+            <p style={{color:"#fff",fontWeight:800,fontSize:16}}>NET PAYABLE</p>
+            <p style={{color:"#fff",fontWeight:900,fontSize:20}}>{f2(sl.netEarned)}</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if(!report) return <Empty icon="📊" msg="No report data"/>;
 
   let list=report.report||[];
