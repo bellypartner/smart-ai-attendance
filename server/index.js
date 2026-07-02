@@ -134,7 +134,7 @@ app.post('/api/auth/login', async (req, res) => {
     const { rows } = await db(
       `SELECT u.*, o.name AS org_name, o.code AS org_code, b.name AS branch_name,
              jc.name AS job_category_name, jc.working_days_type AS cat_working_days,
-             jc.cl_per_month, jc.sl_per_month, jc.sunday_off
+             jc.cl_per_month, jc.sl_per_month, jc.sunday_off, jc.sunday_off
        FROM users u
        LEFT JOIN organizations o ON o.id = u.org_id
        LEFT JOIN branches b ON b.id = u.branch_id
@@ -1059,6 +1059,7 @@ app.get('/api/my-salary', auth(['employee','branch_admin']), async (req, res) =>
       db(`SELECT COALESCE(SUM(amount),0) AS monthly_deduction
           FROM salary_advances
           WHERE employee_id=$1
+            AND status IN ('approved','recovering')
             AND created_at::date > make_date(CASE WHEN $3=1 THEN $2-1 ELSE $2 END,
             CASE WHEN $3=1 THEN 12 ELSE $3-1 END, 10)
             AND created_at::date <= make_date(CASE WHEN $3=12 THEN $2+1 ELSE $2 END,
@@ -1157,7 +1158,7 @@ app.get('/api/salary-report', auth(['super_admin', 'org_admin', 'branch_admin'])
                jc.sunday_off, jc.name AS job_category_name
           FROM users u LEFT JOIN branches b ON b.id=u.branch_id
           LEFT JOIN job_categories jc ON jc.id=u.job_category_id
-          WHERE u.org_id=$1 AND u.role IN ('employee','branch_admin') AND u.is_active=true
+          WHERE u.org_id=$1 AND u.role IN ('employee','branch_admin') AND u.is_active=true AND u.status NOT IN ('relieved','terminated')
           ${req.user.role === 'branch_admin' ? "AND u.branch_id='" + req.user.branch_id + "'" : ''}
           ORDER BY u.name`, [oid]),
       db('SELECT * FROM org_settings WHERE org_id=$1', [oid]),
@@ -1191,6 +1192,7 @@ app.get('/api/salary-report', auth(['super_admin', 'org_admin', 'branch_admin'])
       const noShowDeductions = noShows * (s.no_show_penalty || 250);
       // Include advance deductions
       const { rows: empAdvRows } = await db(`SELECT COALESCE(SUM(amount),0) AS adv FROM salary_advances WHERE employee_id=$1
+          AND status IN ('approved','recovering')
           AND created_at::date > make_date(CASE WHEN $3=1 THEN $2-1 ELSE $2 END,
             CASE WHEN $3=1 THEN 12 ELSE $3-1 END, COALESCE($4,10))
           AND created_at::date <= make_date(CASE WHEN $3=12 THEN $2+1 ELSE $2 END,
@@ -1322,6 +1324,13 @@ app.patch('/api/advances/:id', auth(['super_admin', 'org_admin']), async (req, r
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+app.patch('/api/advances/:id/reject', auth(['super_admin','org_admin']), async (req, res) => {
+  try {
+    await db(`UPDATE salary_advances SET status='rejected', updated_at=now() WHERE id=$1`, [req.params.id]);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 
 // GET advance recoveries for an employee
 app.get('/api/advances/recoveries', auth(['super_admin', 'org_admin', 'branch_admin']), async (req, res) => {
@@ -1967,7 +1976,7 @@ app.get('/api/salary-slip', auth(), async (req, res) => {
     const { rows:[emp] } = await db(`
       SELECT u.*, b.name AS branch_name, o.name AS org_name,
              jc.name AS job_category_name, jc.working_days_type AS cat_working_days,
-             jc.cl_per_month, jc.sl_per_month
+             jc.cl_per_month, jc.sl_per_month, jc.sunday_off
       FROM users u LEFT JOIN branches b ON b.id=u.branch_id
       LEFT JOIN organizations o ON o.id=u.org_id
       LEFT JOIN job_categories jc ON jc.id=u.job_category_id
@@ -1981,6 +1990,7 @@ app.get('/api/salary-slip', auth(), async (req, res) => {
       db("SELECT * FROM leaves WHERE employee_id=$1 AND date BETWEEN $2::date AND $3::date",[empId,from,to]),
       db(`SELECT COALESCE(SUM(amount),0) AS adv FROM salary_advances
           WHERE employee_id=$1
+          AND status IN ('approved','recovering')
           AND created_at::date > make_date(CASE WHEN $3=1 THEN $2-1 ELSE $2 END,
             CASE WHEN $3=1 THEN 12 ELSE $3-1 END, $4)
           AND created_at::date <= make_date(CASE WHEN $3=12 THEN $2+1 ELSE $2 END,

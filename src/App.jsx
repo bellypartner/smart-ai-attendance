@@ -608,71 +608,6 @@ function EmpSalary({user, notify}) {
   };
   useEffect(()=>{ load(); },[]);
   if(loading) return <Spinner/>;
-
-  // Salary Slip Preview
-  if(slipPreview) {
-    const sl=slipPreview;
-    const mn=["January","February","March","April","May","June","July","August","September","October","November","December"];
-    const f2=n=>"₹"+Number(n||0).toLocaleString("en-IN",{minimumFractionDigits:2});
-    const[sy,sm]=selMonth.split('-').map(Number);
-    return(
-      <div style={{padding:20}}>
-        <div style={{display:"flex",justifyContent:"space-between",marginBottom:16}}>
-          <button onClick={()=>setSlipPreview(null)} style={{background:C.g100,border:"none",borderRadius:10,padding:"8px 16px",cursor:"pointer",color:C.g700,fontWeight:700}}>← Back</button>
-          <button onClick={()=>{
-            const html="<html><head><title>Salary Slip</title><style>body{font-family:Arial;padding:20px}h2{color:#166534}table{width:100%;border-collapse:collapse}td{padding:8px;border-bottom:1px solid #eee}td:last-child{text-align:right}.net{background:#166534;color:#fff;font-weight:900;font-size:18px}.footer{margin-top:30px;display:flex;justify-content:space-between}</style></head><body>"
-              +"<h2>"+sl.employee.org_name+"</h2><h3>Salary Slip — "+mn[sm-1]+" "+sy+"</h3>"
-              +"<p><b>"+sl.employee.name+"</b> | "+(sl.employee.designation||"")+" | "+(sl.employee.branch_name||"")+"</p>"
-              +"<p>Code: "+(sl.employee.employee_code||"—")+" | Salary process day: "+sl.period.processDay+"</p><hr/>"
-              +"<table><tr><td>Basic Salary</td><td>"+f2(sl.earnings.salary)+"</td></tr>"
-              +"<tr><td>Days Present / "+sl.period.divisor+"</td><td>"+sl.attendance.presentDays+"</td></tr>"
-              +"<tr><td>Half Days</td><td>"+sl.attendance.halfDays+"</td></tr>"
-              +"<tr><td><b>Gross Earned</b></td><td><b>"+f2(sl.earnings.earnedGross)+"</b></td></tr>"
-              +"<tr><td colspan=2 style='background:#f3f4f6;font-weight:700;font-size:12px'>DEDUCTIONS</td></tr>"
-              +"<tr><td>Late penalty</td><td>-"+f2(sl.deductions.lateDeduct)+"</td></tr>"
-              +"<tr><td>Half day deduction</td><td>-"+f2(sl.deductions.halfDeduct)+"</td></tr>"
-              +"<tr><td>Leave deduction</td><td>-"+f2(sl.deductions.leaveDeduct)+"</td></tr>"
-              +"<tr><td>Early checkout</td><td>-"+f2(sl.deductions.earlyDeduct)+"</td></tr>"
-              +"<tr><td>Advance recovery (until "+sl.period.processDay+"th)</td><td>-"+f2(sl.deductions.advDeduct)+"</td></tr>"
-              +(sl.deductions.adjDeduct>0?"<tr><td>Manual deduction</td><td>-"+f2(sl.deductions.adjDeduct)+"</td></tr>":"")
-              +(sl.deductions.adjBonus>0?"<tr><td>Bonus</td><td>+"+f2(sl.deductions.adjBonus)+"</td></tr>":"")
-              +"<tr class='net'><td>NET PAYABLE</td><td>"+f2(sl.netEarned)+"</td></tr></table>"
-              +"<div class='footer'><div style='text-align:center;border-top:1px solid #000;padding-top:6px;width:180px'>Employee Signature</div><div style='text-align:center;border-top:1px solid #000;padding-top:6px;width:180px'>Authorised Signatory</div></div>"
-              +"</body></html>";
-            const w=window.open("","_blank");
-            if(w){w.document.write(html);w.document.close();setTimeout(()=>w.print(),500);}
-          }} style={{background:"#7c3aed",border:"none",borderRadius:10,color:"#fff",padding:"8px 16px",cursor:"pointer",fontWeight:700}}>🖨 Print / PDF</button>
-        </div>
-        <div style={{background:C.white,borderRadius:20,padding:20,boxShadow:`0 2px 12px ${C.g300}44`}}>
-          <h2 style={{color:C.g800,textAlign:"center",fontWeight:900}}>{sl.employee.org_name}</h2>
-          <p style={{textAlign:"center",color:C.gr500,marginBottom:16}}>Salary Slip — {mn[sm-1]} {sy}</p>
-          <div style={{background:C.g50,borderRadius:14,padding:14,marginBottom:16,display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-            {[["Name",sl.employee.name],["Designation",sl.employee.designation||"—"],["Branch",sl.employee.branch_name||"—"],["Code",sl.employee.employee_code||"—"],["Category",sl.employee.job_category||"—"],["Process Day",sl.period.processDay+"th of month"]].map(([l,v])=>(
-              <div key={l}><p style={{color:C.gr400,fontSize:11}}>{l}</p><p style={{color:C.g800,fontWeight:700,fontSize:13}}>{v}</p></div>
-            ))}
-          </div>
-          {[["Basic Salary",f2(sl.earnings.salary),false],["Days Present",sl.attendance.presentDays+"/"+sl.period.divisor,false],
-            ["Half Days",sl.attendance.halfDays,false],["Gross Earned",f2(sl.earnings.earnedGross),false],
-            ["Late Penalty","-"+f2(sl.deductions.lateDeduct),true],["Half Day Deduction","-"+f2(sl.deductions.halfDeduct),true],
-            ["Leave Deduction","-"+f2(sl.deductions.leaveDeduct),true],["Early Checkout","-"+f2(sl.deductions.earlyDeduct),true],
-            ["Advance Recovery","-"+f2(sl.deductions.advDeduct),true],
-            ...(sl.deductions.adjDeduct>0?[["Manual Deduction","-"+f2(sl.deductions.adjDeduct),true]]:[]),
-            ...(sl.deductions.adjBonus>0?[["Bonus","+"+f2(sl.deductions.adjBonus),false]]:[]),
-          ].map(([l,v,isDed])=>(
-            <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${C.g50}`}}>
-              <p style={{color:C.gr600,fontSize:13}}>{l}</p>
-              <p style={{color:isDed?C.red:C.g800,fontSize:13,fontWeight:600}}>{v}</p>
-            </div>
-          ))}
-          <div style={{background:C.g700,borderRadius:12,padding:"14px 16px",marginTop:12,display:"flex",justifyContent:"space-between"}}>
-            <p style={{color:"#fff",fontWeight:800,fontSize:16}}>NET PAYABLE</p>
-            <p style={{color:"#fff",fontWeight:900,fontSize:20}}>{f2(sl.netEarned)}</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   if(!report) return <Empty icon="💰" msg="No salary data yet"/>;
   return(
     <div style={{padding:20}}>
@@ -764,7 +699,6 @@ function AdminApp({user, notify, page, setPage, activeOrgId, setActiveOrgId, onL
     ...(isSA||isOA?[{k:"adm_advances",i:"💳",l:"Advances"}]:[]),
     {k:"adm_calendar",i:"🗓",l:"Calendar"},
     {k:"adm_hierarchy",i:"🏛",l:"Hierarchy"},
-    ...(isSA||isOA?[{k:"adm_sal_adj",i:"⚖️",l:"Adj."}]:[]),
     ...(isSA||isOA?[
       {k:"adm_kpi_templates",i:"📊",l:"KPIs"},
       {k:"adm_kpi_review",i:"✅",l:"KPI Review"},
@@ -791,7 +725,6 @@ function AdminApp({user, notify, page, setPage, activeOrgId, setActiveOrgId, onL
     adm_advances: <AdminAdvances user={user} notify={notify} activeOrgId={activeOrgId}/>,
     adm_calendar: <AttendanceCalendar user={user} notify={notify} isAdmin={true} activeOrgId={activeOrgId}/>,
     adm_hierarchy: <HierarchyTable user={user} notify={notify} activeOrgId={activeOrgId}/>,
-    adm_sal_adj: <SalaryAdjustmentManager notify={notify} activeOrgId={activeOrgId}/>,
     adm_kpi_templates: <KPITemplateManager notify={notify} activeOrgId={activeOrgId}/>,
     adm_kpi_review: <KPIReview notify={notify} activeOrgId={activeOrgId}/>,
     adm_kpi_scores: <KPIScores notify={notify} activeOrgId={activeOrgId} user={user}/>,
@@ -1496,71 +1429,6 @@ function AdminReports({user, notify, activeOrgId}) {
   },[activeOrgId,selMonth]);
 
   if(loading) return <Spinner/>;
-
-  // Salary Slip Preview
-  if(slipPreview) {
-    const sl=slipPreview;
-    const mn=["January","February","March","April","May","June","July","August","September","October","November","December"];
-    const f2=n=>"₹"+Number(n||0).toLocaleString("en-IN",{minimumFractionDigits:2});
-    const[sy,sm]=selMonth.split('-').map(Number);
-    return(
-      <div style={{padding:20}}>
-        <div style={{display:"flex",justifyContent:"space-between",marginBottom:16}}>
-          <button onClick={()=>setSlipPreview(null)} style={{background:C.g100,border:"none",borderRadius:10,padding:"8px 16px",cursor:"pointer",color:C.g700,fontWeight:700}}>← Back</button>
-          <button onClick={()=>{
-            const html="<html><head><title>Salary Slip</title><style>body{font-family:Arial;padding:20px}h2{color:#166534}table{width:100%;border-collapse:collapse}td{padding:8px;border-bottom:1px solid #eee}td:last-child{text-align:right}.net{background:#166534;color:#fff;font-weight:900;font-size:18px}.footer{margin-top:30px;display:flex;justify-content:space-between}</style></head><body>"
-              +"<h2>"+sl.employee.org_name+"</h2><h3>Salary Slip — "+mn[sm-1]+" "+sy+"</h3>"
-              +"<p><b>"+sl.employee.name+"</b> | "+(sl.employee.designation||"")+" | "+(sl.employee.branch_name||"")+"</p>"
-              +"<p>Code: "+(sl.employee.employee_code||"—")+" | Salary process day: "+sl.period.processDay+"</p><hr/>"
-              +"<table><tr><td>Basic Salary</td><td>"+f2(sl.earnings.salary)+"</td></tr>"
-              +"<tr><td>Days Present / "+sl.period.divisor+"</td><td>"+sl.attendance.presentDays+"</td></tr>"
-              +"<tr><td>Half Days</td><td>"+sl.attendance.halfDays+"</td></tr>"
-              +"<tr><td><b>Gross Earned</b></td><td><b>"+f2(sl.earnings.earnedGross)+"</b></td></tr>"
-              +"<tr><td colspan=2 style='background:#f3f4f6;font-weight:700;font-size:12px'>DEDUCTIONS</td></tr>"
-              +"<tr><td>Late penalty</td><td>-"+f2(sl.deductions.lateDeduct)+"</td></tr>"
-              +"<tr><td>Half day deduction</td><td>-"+f2(sl.deductions.halfDeduct)+"</td></tr>"
-              +"<tr><td>Leave deduction</td><td>-"+f2(sl.deductions.leaveDeduct)+"</td></tr>"
-              +"<tr><td>Early checkout</td><td>-"+f2(sl.deductions.earlyDeduct)+"</td></tr>"
-              +"<tr><td>Advance recovery (until "+sl.period.processDay+"th)</td><td>-"+f2(sl.deductions.advDeduct)+"</td></tr>"
-              +(sl.deductions.adjDeduct>0?"<tr><td>Manual deduction</td><td>-"+f2(sl.deductions.adjDeduct)+"</td></tr>":"")
-              +(sl.deductions.adjBonus>0?"<tr><td>Bonus</td><td>+"+f2(sl.deductions.adjBonus)+"</td></tr>":"")
-              +"<tr class='net'><td>NET PAYABLE</td><td>"+f2(sl.netEarned)+"</td></tr></table>"
-              +"<div class='footer'><div style='text-align:center;border-top:1px solid #000;padding-top:6px;width:180px'>Employee Signature</div><div style='text-align:center;border-top:1px solid #000;padding-top:6px;width:180px'>Authorised Signatory</div></div>"
-              +"</body></html>";
-            const w=window.open("","_blank");
-            if(w){w.document.write(html);w.document.close();setTimeout(()=>w.print(),500);}
-          }} style={{background:"#7c3aed",border:"none",borderRadius:10,color:"#fff",padding:"8px 16px",cursor:"pointer",fontWeight:700}}>🖨 Print / PDF</button>
-        </div>
-        <div style={{background:C.white,borderRadius:20,padding:20,boxShadow:`0 2px 12px ${C.g300}44`}}>
-          <h2 style={{color:C.g800,textAlign:"center",fontWeight:900}}>{sl.employee.org_name}</h2>
-          <p style={{textAlign:"center",color:C.gr500,marginBottom:16}}>Salary Slip — {mn[sm-1]} {sy}</p>
-          <div style={{background:C.g50,borderRadius:14,padding:14,marginBottom:16,display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-            {[["Name",sl.employee.name],["Designation",sl.employee.designation||"—"],["Branch",sl.employee.branch_name||"—"],["Code",sl.employee.employee_code||"—"],["Category",sl.employee.job_category||"—"],["Process Day",sl.period.processDay+"th of month"]].map(([l,v])=>(
-              <div key={l}><p style={{color:C.gr400,fontSize:11}}>{l}</p><p style={{color:C.g800,fontWeight:700,fontSize:13}}>{v}</p></div>
-            ))}
-          </div>
-          {[["Basic Salary",f2(sl.earnings.salary),false],["Days Present",sl.attendance.presentDays+"/"+sl.period.divisor,false],
-            ["Half Days",sl.attendance.halfDays,false],["Gross Earned",f2(sl.earnings.earnedGross),false],
-            ["Late Penalty","-"+f2(sl.deductions.lateDeduct),true],["Half Day Deduction","-"+f2(sl.deductions.halfDeduct),true],
-            ["Leave Deduction","-"+f2(sl.deductions.leaveDeduct),true],["Early Checkout","-"+f2(sl.deductions.earlyDeduct),true],
-            ["Advance Recovery","-"+f2(sl.deductions.advDeduct),true],
-            ...(sl.deductions.adjDeduct>0?[["Manual Deduction","-"+f2(sl.deductions.adjDeduct),true]]:[]),
-            ...(sl.deductions.adjBonus>0?[["Bonus","+"+f2(sl.deductions.adjBonus),false]]:[]),
-          ].map(([l,v,isDed])=>(
-            <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${C.g50}`}}>
-              <p style={{color:C.gr600,fontSize:13}}>{l}</p>
-              <p style={{color:isDed?C.red:C.g800,fontSize:13,fontWeight:600}}>{v}</p>
-            </div>
-          ))}
-          <div style={{background:C.g700,borderRadius:12,padding:"14px 16px",marginTop:12,display:"flex",justifyContent:"space-between"}}>
-            <p style={{color:"#fff",fontWeight:800,fontSize:16}}>NET PAYABLE</p>
-            <p style={{color:"#fff",fontWeight:900,fontSize:20}}>{f2(sl.netEarned)}</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   if(!report) return <Empty icon="📊" msg="No report data"/>;
 
   let list=report.report||[];
@@ -1568,8 +1436,11 @@ function AdminReports({user, notify, activeOrgId}) {
 
   return(
     <div style={{padding:20}}>
-      <h2 style={{color:C.g800,fontSize:22,fontWeight:800,marginBottom:4}}>Monthly Report</h2>
-      <p style={{color:C.gr500,fontSize:13,marginBottom:16}}>{now.toLocaleDateString("en-IN",{month:"long",year:"numeric"})} Select Month<input type="month" value={selMonth} onChange={e=>setSelMonth(e.target.value)} style={{border:"1px solid #86efac",borderRadius:8,padding:"6px 10px",fontSize:13,marginBottom:12,display:"block"}}/> </p>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+        <h2 style={{color:C.g800,fontSize:22,fontWeight:800}}>Monthly Report</h2>
+        <input type="month" value={selMonth} onChange={e=>setSelMonth(e.target.value)} style={{border:`1px solid ${C.g300}`,borderRadius:8,padding:"6px 10px",fontSize:13,color:C.g700,background:"#fff"}}/>
+      </div>
+      <p style={{color:C.gr500,fontSize:13,marginBottom:16}}>{now.toLocaleDateString("en-IN",{month:"long",year:"numeric"})}</p>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
         <div style={{background:C.g700,borderRadius:18,padding:16,textAlign:"center"}}>
           <p style={{color:"rgba(255,255,255,0.7)",fontSize:12}}>Total Payable</p>
@@ -1596,7 +1467,8 @@ function AdminReports({user, notify, activeOrgId}) {
           </div>
           <button onClick={async()=>{
             const[sy,sm]=selMonth.split('-').map(Number);
-            try{const slip=await GET("/api/salary-slip",{employee_id:e.id,year:sy,month:sm});setSlipPreview(slip);}catch(err){notify(err.message,"error");}
+            try{const slip=await GET("/api/salary-slip",{employee_id:e.id,year:sy,month:sm});setSlipPreview(slip);}
+            catch(err){notify(err.message,"error");}
           }} style={{marginTop:8,background:"#7c3aed",border:"none",borderRadius:10,color:"#fff",padding:"8px 16px",cursor:"pointer",fontSize:12,fontWeight:700,width:"100%"}}>📄 View Salary Slip</button>
         </div>
       ))}
@@ -1611,7 +1483,7 @@ function AdminEditAtt({user, notify, activeOrgId}) {
   useEffect(()=>{
     if(!activeOrgId)return;
     GET("/api/employees",{org_id:activeOrgId}).then(e=>setEmployees(e||[])).finally(()=>setLoading(false));
-  },[activeOrgId,selMonth]);
+  },[activeOrgId]);
   const go=async()=>{
     if(!selEmp||!cin){notify("Employee and check-in required","error");return;}
     try{await POST("/api/attendance/admin-mark",{employee_id:selEmp,date:selDate,check_in_time:cin,check_out_time:cout||null,notes,org_id:activeOrgId});notify("Attendance saved ✓");}
@@ -1666,7 +1538,7 @@ function AdminSettings({user, notify, activeOrgId}) {
   };
 
   if(loading||!settings) return <Spinner/>;
-  const fields=[["grace_period_mins","Grace period (mins)"],["salary_process_day","Salary process day (1-31)"],["late_deduction_per_occ","Late deduction (₹)"],["max_allowed_lates_per_month","Max lates/month"],["excess_late_penalty","Excess late penalty (₹)"],["unauth_leave_penalty","Unauth leave penalty (₹)"],["no_show_penalty","No-show penalty (₹)"],["casual_leave_per_month","Casual leave/month"],["working_days_per_month","Working days/month"],["geo_fence_radius_meters","Geo-fence radius (m)"]];
+  const fields=[["grace_period_mins","Grace period (mins)"],["late_deduction_per_occ","Late deduction (₹)"],["max_allowed_lates_per_month","Max lates/month"],["excess_late_penalty","Excess late penalty (₹)"],["unauth_leave_penalty","Unauth leave penalty (₹)"],["no_show_penalty","No-show penalty (₹)"],["casual_leave_per_month","Casual leave/month"],["working_days_per_month","Working days/month"],["geo_fence_radius_meters","Geo-fence radius (m)"]];
   <><label style={S.label}>Early checkout flat penalty (₹)</label><input style={S.input} type="number" value={settings.early_checkout_flat_penalty || 50}
     onChange={e => setSettings(s => ({ ...s, early_checkout_flat_penalty: e.target.value }))} /><p style={{ color: C.gr500, fontSize: 12, marginBottom: 10 }}>Fixed penalty per early checkout + proportional hourly deduction auto-calculated from salary</p></>
   return(
@@ -1785,15 +1657,14 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
   const [editForm, setEditForm] = useState({ cin: "", cout: "", notes: "" });
   const [saving, setSaving] = useState(false);
 
-  const getRange = () => {
+  const getRange=()=>{
     if(view==="day") return {from:selDate,to:selDate};
     const[y,m]=selMonth.split("-").map(Number);
     return {from:`${y}-${pad(m)}-01`,to:new Date(y,m,0).toISOString().split("T")[0]};
   };
-
-  const loadAll = async () => {
+  const loadAll=async()=>{
     setLoading(true);
-    try {
+    try{
       const{from,to}=getRange();
       const[e,b,att,lv]=await Promise.all([
         GET("/api/employees",{org_id:activeOrgId}),
@@ -1801,25 +1672,22 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
         GET("/api/attendance",{from,to,org_id:activeOrgId}),
         GET("/api/leaves",{from,to,org_id:activeOrgId}),
       ]);
-      setEmployees(e||[]); setBranches(b||[]);
-      setRecords(att||[]); setLeaves(lv||[]);
-    } catch(err){notify(err.message,"error");setRecords([]);setLeaves([]);}
+      setEmployees(e||[]);setBranches(b||[]);setRecords(att||[]);setLeaves(lv||[]);
+    }catch(err){notify(err.message,"error");setRecords([]);setLeaves([]);}
     finally{setLoading(false);}
   };
-
-  const loadRecords = async () => {
+  const loadRecords=async()=>{
     setLoading(true);
-    try {
+    try{
       const{from,to}=getRange();
       const[att,lv]=await Promise.all([
         GET("/api/attendance",{from,to,org_id:activeOrgId}),
         GET("/api/leaves",{from,to,org_id:activeOrgId}),
       ]);
-      setRecords(att||[]); setLeaves(lv||[]);
-    } catch(err){notify(err.message,"error");setRecords([]);setLeaves([]);}
+      setRecords(att||[]);setLeaves(lv||[]);
+    }catch(err){notify(err.message,"error");setRecords([]);setLeaves([]);}
     finally{setLoading(false);}
   };
-
   useEffect(()=>{if(activeOrgId)loadAll();},[activeOrgId]);
   useEffect(()=>{if(activeOrgId)loadRecords();},[view,selDate,selMonth]);
 
@@ -4275,62 +4143,6 @@ function TaskManager({user, notify, activeOrgId, isAdminView}) {
   );
 }
 
-
-
-function SalaryAdjustmentManager({notify,activeOrgId}) {
-  const [employees,setEmployees]=useState([]);
-  const [selEmp,setSelEmp]=useState("");
-  const now=new Date();
-  const [selMonth,setSelMonth]=useState(now.getFullYear()+"-"+pad(now.getMonth()+1));
-  const [adjustments,setAdjustments]=useState([]);
-  const [form,setForm]=useState({amount:"",type:"deduction",reason:""});
-  const fv=(k,v)=>setForm(p=>({...p,[k]:v}));
-  useEffect(()=>{if(activeOrgId)GET("/api/employees",{org_id:activeOrgId}).then(e=>setEmployees(e||[])).catch(()=>{});},[activeOrgId]);
-  const load=()=>{
-    if(!selEmp)return;
-    const[y,m]=selMonth.split("-").map(Number);
-    GET("/api/salary-adjustments",{employee_id:selEmp,year:y,month:m,org_id:activeOrgId}).then(r=>setAdjustments(r||[])).catch(()=>{});
-  };
-  useEffect(()=>{load();},[selEmp,selMonth]);
-  const save=async()=>{
-    if(!selEmp){notify("Select employee","error");return;}
-    if(!form.amount||!form.reason){notify("Amount and reason required","error");return;}
-    const[y,m]=selMonth.split("-").map(Number);
-    try{await POST("/api/salary-adjustments",{employee_id:selEmp,amount:Number(form.amount),type:form.type,reason:form.reason,year:y,month:m,org_id:activeOrgId});notify("Saved ✓");setForm({amount:"",type:"deduction",reason:""});load();}
-    catch(e){notify(e.message,"error");}
-  };
-  const del=async(id)=>{if(!window.confirm("Delete?"))return;try{await DEL("/api/salary-adjustments/"+id);notify("Deleted");load();}catch(e){notify(e.message,"error");}};
-  const netAdj=adjustments.reduce((s,a)=>s+(a.type==="bonus"?Number(a.amount):-Number(a.amount)),0);
-  return(
-    <div style={{padding:20}}>
-      <h2 style={{color:C.g800,fontSize:22,fontWeight:800,marginBottom:16}}>Salary Adjustments</h2>
-      <select style={{...S.select,marginBottom:10}} value={selEmp} onChange={e=>setSelEmp(e.target.value)}>
-        <option value="">Select employee</option>
-        {employees.map(e=><option key={e.id} value={e.id}>{e.name} — {e.branch_name||""}</option>)}
-      </select>
-      <input style={{...S.input,marginBottom:16}} type="month" value={selMonth} onChange={e=>setSelMonth(e.target.value)}/>
-      {adjustments.length>0&&<div style={{background:netAdj>=0?C.g50:"#fee2e2",borderRadius:14,padding:14,marginBottom:16}}><p style={{color:netAdj>=0?C.g700:C.red,fontWeight:800}}>Net: {netAdj>=0?"+":""}{fmt(netAdj)}</p></div>}
-      <div style={{background:C.white,borderRadius:16,padding:16,marginBottom:16,boxShadow:`0 2px 8px ${C.g300}33`}}>
-        <p style={{color:C.g800,fontWeight:800,marginBottom:12}}>Add adjustment</p>
-        <select style={{...S.select,marginBottom:8}} value={form.type} onChange={e=>fv("type",e.target.value)}>
-          <option value="deduction">Deduction</option><option value="bonus">Bonus</option><option value="correction">Correction</option>
-        </select>
-        <input style={{...S.input,marginBottom:8}} type="number" placeholder="Amount (₹)" value={form.amount} onChange={e=>fv("amount",e.target.value)}/>
-        <input style={{...S.input,marginBottom:8}} placeholder="Reason (required)" value={form.reason} onChange={e=>fv("reason",e.target.value)}/>
-        <button style={S.btn} onClick={save}>Save</button>
-      </div>
-      {adjustments.map(a=>(
-        <div key={a.id} style={{background:C.white,borderRadius:14,padding:14,marginBottom:8,borderLeft:`4px solid ${a.type==="bonus"?C.g600:C.red}`}}>
-          <div style={{display:"flex",justifyContent:"space-between"}}>
-            <div><p style={{color:a.type==="bonus"?C.g700:C.red,fontWeight:800}}>{a.type==="bonus"?"+":"-"}{fmt(a.amount)} — {a.type}</p><p style={{color:C.gr500,fontSize:12}}>{a.reason}</p></div>
-            <button onClick={()=>del(a.id)} style={{background:"none",border:`1px solid ${C.red}`,borderRadius:8,padding:"4px 10px",cursor:"pointer",color:C.red,fontSize:12}}>🗑</button>
-          </div>
-        </div>
-      ))}
-      {adjustments.length===0&&selEmp&&<p style={{color:C.gr500,textAlign:"center",padding:20}}>No adjustments</p>}
-    </div>
-  );
-}
 
 // ── STYLES ─────────────────────────────────────────────────────────────────
 const S = {
