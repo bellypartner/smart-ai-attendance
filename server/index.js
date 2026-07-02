@@ -300,6 +300,7 @@ app.get('/api/employees', auth(['super_admin', 'org_admin', 'branch_admin']), as
       WHERE u.org_id = $1
         AND u.role NOT IN ('super_admin')
         AND u.is_active = true
+        AND u.status NOT IN ('relieved','terminated')
         ${req.user.role === 'branch_admin' ? "AND u.branch_id = '" + req.user.branch_id + "'" : ''}
       ORDER BY u.name
     `, [oid]);
@@ -615,7 +616,7 @@ app.get('/api/attendance', auth(), async (req, res) => {
              b.name AS branch_name, st.name AS shift_name,
              st.start_time AS shift_start, st.end_time AS shift_end
       FROM attendance_records ar
-      JOIN users u ON u.id = ar.employee_id
+      JOIN users u ON u.id = ar.employee_id AND u.is_active = true
       LEFT JOIN branches b ON b.id = ar.branch_id
       LEFT JOIN shift_templates st ON st.id = ar.shift_id
       WHERE ar.org_id = $1
@@ -1058,17 +1059,15 @@ app.get('/api/my-salary', auth(['employee','branch_admin']), async (req, res) =>
       db(`SELECT COALESCE(SUM(amount),0) AS monthly_deduction
           FROM salary_advances
           WHERE employee_id=$1
-            AND created_at::date > make_date(
-              CASE WHEN $3=1 THEN $2-1 ELSE $2 END,
+            AND created_at::date > make_date(CASE WHEN $3=1 THEN $2-1 ELSE $2 END,
             CASE WHEN $3=1 THEN 12 ELSE $3-1 END, 10)
-            AND created_at::date <= make_date(
-              CASE WHEN $3=12 THEN $2+1 ELSE $2 END,
+            AND created_at::date <= make_date(CASE WHEN $3=12 THEN $2+1 ELSE $2 END,
             CASE WHEN $3=12 THEN 1 ELSE $3+1 END, 10)`, [req.user.id, y, m]),
     ]);
 
     const s = settRows[0] || {};
     const salary = Number(uRows[0]?.salary || 0);
-    const workingDays = 30; // Fixed 30 days
+    const workingDays = 30;
     // Get job category for this employee
     const { rows: catRows } = await db(`
       SELECT jc.* FROM job_categories jc
@@ -1154,8 +1153,10 @@ app.get('/api/salary-report', auth(['super_admin', 'org_admin', 'branch_admin'])
 
     const [{ rows: emps }, { rows: settRows }] = await Promise.all([
       db(`SELECT u.id, u.name, u.designation, u.salary, u.status,
-               b.name AS branch_name, b.id AS branch_id
+               b.name AS branch_name, b.id AS branch_id,
+               jc.sunday_off, jc.name AS job_category_name
           FROM users u LEFT JOIN branches b ON b.id=u.branch_id
+          LEFT JOIN job_categories jc ON jc.id=u.job_category_id
           WHERE u.org_id=$1 AND u.role IN ('employee','branch_admin') AND u.is_active=true
           ${req.user.role === 'branch_admin' ? "AND u.branch_id='" + req.user.branch_id + "'" : ''}
           ORDER BY u.name`, [oid]),
@@ -1168,12 +1169,20 @@ app.get('/api/salary-report', auth(['super_admin', 'org_admin', 'branch_admin'])
         db('SELECT * FROM attendance_records WHERE employee_id=$1 AND date BETWEEN $2 AND $3', [emp.id, from, to]),
         db('SELECT * FROM leaves WHERE employee_id=$1 AND date BETWEEN $2::date AND $3::date', [emp.id, from, to]),
       ]);
-      const presentDays = att.filter(a => a.check_in_time).length;
+      // Sunday off - count Sundays as worked
+      const isSundayOff = emp.sunday_off;
+      const sundayCount = (() => {
+        let c=0; const d=new Date(y,m-1,1);
+        while(d.getMonth()===m-1){if(d.getDay()===0)c++;d.setDate(d.getDate()+1);}
+        return c;
+      })();
+      const rawPresent = att.filter(a => a.check_in_time).length;
+      const presentDays = isSundayOff ? Math.min(30, rawPresent + sundayCount) : rawPresent;
       const lateDays = att.filter(a => a.is_late && a.approval_status !== 'rejected').length;
       const unauthLeaves = lvs.filter(l => l.type === 'unauthorized').length;
       const noShows = lvs.filter(l => l.type === 'noshow').length;
       const casualUsed = lvs.filter(l => l.type === 'casual').length;
-      const wdm = 30; // Fixed 30 days
+      const wdm = 30;
       const dailyRate = emp.salary / wdm;
       const earnedGross = presentDays * dailyRate;
       const excessLates = Math.max(0, lateDays - (s.max_allowed_lates_per_month || 3));
@@ -1182,11 +1191,9 @@ app.get('/api/salary-report', auth(['super_admin', 'org_admin', 'branch_admin'])
       const noShowDeductions = noShows * (s.no_show_penalty || 250);
       // Include advance deductions
       const { rows: empAdvRows } = await db(`SELECT COALESCE(SUM(amount),0) AS adv FROM salary_advances WHERE employee_id=$1
-          AND created_at::date > make_date(
-            CASE WHEN $3=1 THEN $2-1 ELSE $2 END,
+          AND created_at::date > make_date(CASE WHEN $3=1 THEN $2-1 ELSE $2 END,
             CASE WHEN $3=1 THEN 12 ELSE $3-1 END, COALESCE($4,10))
-          AND created_at::date <= make_date(
-            CASE WHEN $3=12 THEN $2+1 ELSE $2 END,
+          AND created_at::date <= make_date(CASE WHEN $3=12 THEN $2+1 ELSE $2 END,
             CASE WHEN $3=12 THEN 1 ELSE $3+1 END, COALESCE($4,10))`,
         [emp.id, y, m, parseInt(s?.salary_process_day||10)]).catch(()=>({rows:[{adv:0}]}));
       const advDeduction = Number(empAdvRows[0]?.adv || 0);
@@ -1974,11 +1981,9 @@ app.get('/api/salary-slip', auth(), async (req, res) => {
       db("SELECT * FROM leaves WHERE employee_id=$1 AND date BETWEEN $2::date AND $3::date",[empId,from,to]),
       db(`SELECT COALESCE(SUM(amount),0) AS adv FROM salary_advances
           WHERE employee_id=$1
-          AND created_at::date > make_date(
-            CASE WHEN $3=1 THEN $2-1 ELSE $2 END,
+          AND created_at::date > make_date(CASE WHEN $3=1 THEN $2-1 ELSE $2 END,
             CASE WHEN $3=1 THEN 12 ELSE $3-1 END, $4)
-          AND created_at::date <= make_date(
-            CASE WHEN $3=12 THEN $2+1 ELSE $2 END,
+          AND created_at::date <= make_date(CASE WHEN $3=12 THEN $2+1 ELSE $2 END,
             CASE WHEN $3=12 THEN 1 ELSE $3+1 END, $4)`,
         [empId,y,m,processDay]).catch(()=>({rows:[{adv:0}]})),
       db('SELECT * FROM salary_adjustments WHERE employee_id=$1 AND year=$2 AND month=$3 ORDER BY created_at',[empId,y,m]).catch(()=>({rows:[]})),
@@ -1986,7 +1991,16 @@ app.get('/api/salary-slip', auth(), async (req, res) => {
     const att=attR.rows, lvs=lvsR.rows, adjRows=adjR.rows;
     const salary=Number(emp.salary||0), divisor=Number(emp.cat_working_days||st.working_days_per_month||30);
     const dailyRate=salary/divisor, hourlyRate=dailyRate/8;
-    const presentDays=att.filter(a=>a.check_in_time).length;
+    // Sunday off workaround - count Sundays in month as worked
+    const cat_sunday_off = emp.sunday_off;
+    const sundaysInMonth = (() => {
+      let count=0;
+      const d=new Date(y,m-1,1);
+      while(d.getMonth()===m-1){if(d.getDay()===0)count++;d.setDate(d.getDate()+1);}
+      return count;
+    })();
+    const rawPresent = att.filter(a=>a.check_in_time).length;
+    const presentDays = cat_sunday_off ? Math.min(30, rawPresent + sundaysInMonth) : rawPresent;
     const lateDays=att.filter(a=>a.is_late).length;
     const halfDays=lvs.filter(l=>l.type==='half_day').length;
     const clUsed=lvs.filter(l=>l.type==='casual').length;
