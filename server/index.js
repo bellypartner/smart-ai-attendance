@@ -1098,15 +1098,10 @@ app.get('/api/my-salary', auth(['employee','branch_admin']), async (req, res) =>
     const divisor = cat?.working_days_type || workingDays;
     const dailyRate = salary / divisor;
     const hourlyRate = dailyRate / 8;
-    // paidDays based on actual attendance
     const daysInMth_ = new Date(y,m,0).getDate();
-    const sunCount_ = (() => {
-      let c=0; const d=new Date(y,m-1,1);
-      while(d.getMonth()===m-1){if(d.getDay()===0)c++;d.setDate(d.getDate()+1);}
-      return c;
-    })();
+    const sunCount_ = (()=>{let c=0;const d=new Date(y,m-1,1);while(d.getMonth()===m-1){if(d.getDay()===0)c++;d.setDate(d.getDate()+1);}return c;})();
     const workingDaysInMonth = uRows[0]?.sunday_off ? daysInMth_ - sunCount_ : daysInMth_;
-    const absentDays = workingDaysInMonth - presentDays;
+    const absentDays = Math.max(0, workingDaysInMonth - presentDays);
     const deductedDays = Math.max(0, absentDays) + (halfDays * 0.5);
     const paidDays = Math.max(0, Math.min(30, 30 - deductedDays));
     const earnedGross = paidDays * dailyRate;
@@ -1207,17 +1202,10 @@ app.get('/api/salary-report', auth(['super_admin', 'org_admin', 'branch_admin'])
       const wdm = 30;
       const dailyRate = emp.salary / wdm;
       // paidDays based on actual attendance
-    const daysInMth_ = new Date(y,m,0).getDate();
-    const sunCount_ = (() => {
-      let c=0; const d=new Date(y,m-1,1);
-      while(d.getMonth()===m-1){if(d.getDay()===0)c++;d.setDate(d.getDate()+1);}
-      return c;
-    })();
-    const workingDaysInMonth = uRows[0]?.sunday_off ? daysInMth_ - sunCount_ : daysInMth_;
-    const absentDays = Math.max(0, wdim - presentDays);
-      const deductedDays = absentDays + (halfDays * 0.5);
-    const paidDays = Math.max(0, Math.min(30, 30 - deductedDays));
-    const earnedGross = paidDays * dailyRate;
+    // absentDays/paidDays already calculated above
+    const deductedDays2 = Math.max(0, absentDays) + (halfDays * 0.5);
+    const paidDays2 = Math.max(0, Math.min(30, 30 - deductedDays2));
+    const earnedGross = paidDays2 * dailyRate;
       const excessLates = Math.max(0, lateDays - (s.max_allowed_lates_per_month || 3));
       const lateDeductions = lateDays * (s.late_deduction_per_occ || 50) + excessLates * (s.excess_late_penalty || 100);
       const leaveDeductions = 0; // leave days already reduce paidDays
@@ -2052,15 +2040,7 @@ app.get('/api/salary-slip', auth(), async (req, res) => {
     const earlyMins=earlyOuts.reduce((s,a)=>s+Number(a.early_mins||0),0);
     const clAllowed=Number(emp.cl_per_month||0), slAllowed=Number(emp.sl_per_month||0);
     const clExcess=Math.max(0,clUsed-clAllowed), slExcess=Math.max(0,slUsed-slAllowed);
-    // paidDays based on actual attendance
-    const daysInMth_ = new Date(y,m,0).getDate();
-    const sunCount_ = (() => {
-      let c=0; const d=new Date(y,m-1,1);
-      while(d.getMonth()===m-1){if(d.getDay()===0)c++;d.setDate(d.getDate()+1);}
-      return c;
-    })();
-    const workingDaysInMonth = uRows[0]?.sunday_off ? daysInMth_ - sunCount_ : daysInMth_;
-    const absentDays = workingDaysInMonth - presentDays;
+    const absentDays = Math.max(0, workingDaysInMonth - presentDays);
     const deductedDays = Math.max(0, absentDays) + (halfDays * 0.5);
     const paidDays = Math.max(0, Math.min(30, 30 - deductedDays));
     const earnedGross = paidDays * dailyRate;
