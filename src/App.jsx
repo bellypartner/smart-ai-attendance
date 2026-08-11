@@ -1759,7 +1759,7 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
   const getStatus = (empId, date) => {
     const leave = getLeave(empId, date);
     if (leave) {
-      const lc = { casual: { label:"CL", color:"#7c3aed", bg:"#ede9fe" }, unauthorized: { label:"UL", color:"#dc2626", bg:"#fee2e2" }, noshow: { label:"NS", color:"#ea580c", bg:"#ffedd5" } };
+      const lc = { casual: { label:"CL", color:"#7c3aed", bg:"#ede9fe" }, unauthorized: { label:"UL", color:"#dc2626", bg:"#fee2e2" }, noshow: { label:"NS", color:"#ea580c", bg:"#ffedd5" }, half_day: { label:"H", color:"#7c3aed", bg:"#ede9fe" }, sick: { label:"SL", color:"#0891b2", bg:"#e0f2fe" } };
       return { type: "leave", ...(lc[leave.type] || { label: "L", color: "#7c3aed", bg: "#ede9fe" }) };
     }
     const rec = getRec(empId, date);

@@ -1058,7 +1058,7 @@ app.get('/api/my-salary', auth(['employee','branch_admin']), async (req, res) =>
       db('SELECT * FROM org_settings WHERE org_id=$1', [req.user.org_id]),
       db('SELECT * FROM attendance_records WHERE employee_id=$1 AND date BETWEEN $2 AND $3', [req.user.id, from, to]),
       db('SELECT * FROM leaves WHERE employee_id=$1 AND date BETWEEN $2::date AND $3::date', [req.user.id, from, to]),
-      db('SELECT salary, working_days_type FROM users WHERE id=$1', [req.user.id]),
+      db('SELECT u.salary, u.working_days_type, jc.sunday_off FROM users u LEFT JOIN job_categories jc ON jc.id=u.job_category_id WHERE u.id=$1', [req.user.id]),
       db(`SELECT COALESCE(SUM(amount),0) AS monthly_deduction
           FROM salary_advances
           WHERE employee_id=$1
@@ -1098,8 +1098,17 @@ app.get('/api/my-salary', auth(['employee','branch_admin']), async (req, res) =>
     const divisor = cat?.working_days_type || workingDays;
     const dailyRate = salary / divisor;
     const hourlyRate = dailyRate / 8;
-    const deductedDays = unauthLeaves + clExcess + slExcess + (halfDays * 0.5);
-    const paidDays = Math.max(0, 30 - deductedDays);
+    // paidDays based on actual attendance
+    const daysInMth_ = new Date(y,m,0).getDate();
+    const sunCount_ = (() => {
+      let c=0; const d=new Date(y,m-1,1);
+      while(d.getMonth()===m-1){if(d.getDay()===0)c++;d.setDate(d.getDate()+1);}
+      return c;
+    })();
+    const workingDaysInMonth = uRows[0]?.sunday_off ? daysInMth_ - sunCount_ : daysInMth_;
+    const absentDays = workingDaysInMonth - presentDays;
+    const deductedDays = Math.max(0, absentDays) + (halfDays * 0.5);
+    const paidDays = Math.max(0, Math.min(30, 30 - deductedDays));
     const earnedGross = paidDays * dailyRate;
 
     const monthlyGraceDays = s.monthly_grace_days || 3;
@@ -1177,13 +1186,14 @@ app.get('/api/salary-report', auth(['super_admin', 'org_admin', 'branch_admin'])
       ]);
       // Sunday off - count Sundays as worked
       const isSundayOff = emp.sunday_off;
+      const daysInMth = new Date(y,m,0).getDate();
       const sundayCount = (() => {
         let c=0; const d=new Date(y,m-1,1);
         while(d.getMonth()===m-1){if(d.getDay()===0)c++;d.setDate(d.getDate()+1);}
         return c;
       })();
-      const rawPresent = att.filter(a => a.check_in_time).length;
-      const presentDays = isSundayOff ? Math.min(30, rawPresent + sundayCount) : rawPresent;
+      const wdim = isSundayOff ? daysInMth - sundayCount : daysInMth;
+      const presentDays = att.filter(a => a.check_in_time).length;
       const lateDays = att.filter(a => a.is_late && a.approval_status !== 'rejected').length;
       const unauthLeaves = lvs.filter(l => l.type === 'unauthorized').length;
       const noShows = lvs.filter(l => l.type === 'noshow').length;
@@ -1196,12 +1206,22 @@ app.get('/api/salary-report', auth(['super_admin', 'org_admin', 'branch_admin'])
       const slExcess = Math.max(0, sickUsed - slAllowed);
       const wdm = 30;
       const dailyRate = emp.salary / wdm;
-      const deductedDays = unauthLeaves + clExcess + slExcess + (halfDays * 0.5);
-    const paidDays = Math.max(0, 30 - deductedDays);
+      // paidDays based on actual attendance
+    const daysInMth_ = new Date(y,m,0).getDate();
+    const sunCount_ = (() => {
+      let c=0; const d=new Date(y,m-1,1);
+      while(d.getMonth()===m-1){if(d.getDay()===0)c++;d.setDate(d.getDate()+1);}
+      return c;
+    })();
+    const workingDaysInMonth = uRows[0]?.sunday_off ? daysInMth_ - sunCount_ : daysInMth_;
+    const absentDays = Math.max(0, wdim - presentDays);
+      const deductedDays = absentDays + (halfDays * 0.5);
+    const paidDays = Math.max(0, Math.min(30, 30 - deductedDays));
     const earnedGross = paidDays * dailyRate;
       const excessLates = Math.max(0, lateDays - (s.max_allowed_lates_per_month || 3));
       const lateDeductions = lateDays * (s.late_deduction_per_occ || 50) + excessLates * (s.excess_late_penalty || 100);
       const leaveDeductions = 0; // leave days already reduce paidDays
+      const halfDayDeduction = halfDays * (dailyRate / 2); // display only
       const noShowDeductions = noShows * (s.no_show_penalty || 250);
       // Include advance deductions
       const { rows: empAdvRows } = await db(`SELECT COALESCE(SUM(amount),0) AS adv FROM salary_advances WHERE employee_id=$1
@@ -2014,16 +2034,15 @@ app.get('/api/salary-slip', auth(), async (req, res) => {
     const att=attR.rows, lvs=lvsR.rows, adjRows=adjR.rows;
     const salary=Number(emp.salary||0), divisor=Number(emp.cat_working_days||st.working_days_per_month||30);
     const dailyRate=salary/divisor, hourlyRate=dailyRate/8;
-    // Sunday off workaround - count Sundays in month as worked
     const cat_sunday_off = emp.sunday_off;
+    const daysInMonth = new Date(y,m,0).getDate();
     const sundaysInMonth = (() => {
-      let count=0;
-      const d=new Date(y,m-1,1);
-      while(d.getMonth()===m-1){if(d.getDay()===0)count++;d.setDate(d.getDate()+1);}
-      return count;
+      let c=0; const d=new Date(y,m-1,1);
+      while(d.getMonth()===m-1){if(d.getDay()===0)c++;d.setDate(d.getDate()+1);}
+      return c;
     })();
-    const rawPresent = att.filter(a=>a.check_in_time).length;
-    const presentDays = cat_sunday_off ? Math.min(30, rawPresent + sundaysInMonth) : rawPresent;
+    const workingDaysInMonth = cat_sunday_off ? daysInMonth - sundaysInMonth : daysInMonth;
+    const presentDays = att.filter(a=>a.check_in_time).length;
     const lateDays=att.filter(a=>a.is_late).length;
     const halfDays=lvs.filter(l=>l.type==='half_day').length;
     const clUsed=lvs.filter(l=>l.type==='casual').length;
@@ -2033,13 +2052,22 @@ app.get('/api/salary-slip', auth(), async (req, res) => {
     const earlyMins=earlyOuts.reduce((s,a)=>s+Number(a.early_mins||0),0);
     const clAllowed=Number(emp.cl_per_month||0), slAllowed=Number(emp.sl_per_month||0);
     const clExcess=Math.max(0,clUsed-clAllowed), slExcess=Math.max(0,slUsed-slAllowed);
-    const deductedDays = unauthLeaves + clExcess + slExcess + (halfDays * 0.5);
-    const paidDays = Math.max(0, 30 - deductedDays);
+    // paidDays based on actual attendance
+    const daysInMth_ = new Date(y,m,0).getDate();
+    const sunCount_ = (() => {
+      let c=0; const d=new Date(y,m-1,1);
+      while(d.getMonth()===m-1){if(d.getDay()===0)c++;d.setDate(d.getDate()+1);}
+      return c;
+    })();
+    const workingDaysInMonth = uRows[0]?.sunday_off ? daysInMth_ - sunCount_ : daysInMth_;
+    const absentDays = workingDaysInMonth - presentDays;
+    const deductedDays = Math.max(0, absentDays) + (halfDays * 0.5);
+    const paidDays = Math.max(0, Math.min(30, 30 - deductedDays));
     const earnedGross = paidDays * dailyRate;
     const grace=st.monthly_grace_days||3;
     const normalLates=Math.min(lateDays,grace), excessLates=Math.max(0,lateDays-grace);
     const lateDeduct=normalLates*(st.late_deduction_per_occ||50)+excessLates*(st.excess_late_deduction||100);
-    const halfDeduct=0; // half days already in deductedDays
+    const halfDeduct=halfDays*(dailyRate/2); // display only - already in paidDays
     const leaveDeduct=0; // Leave days already reduce paidDays in earnedGross
     const earlyDeduct=earlyOuts.length*(st.early_checkout_flat_penalty||50)+Math.round((earlyMins/60)*hourlyRate);
     const advDeduct=Number(advR.rows[0]?.adv||0);
@@ -2052,7 +2080,7 @@ app.get('/api/salary-slip', auth(), async (req, res) => {
       employee:{name:emp.name,designation:emp.designation,employee_code:emp.employee_code,
         branch_name:emp.branch_name,org_name:emp.org_name,date_of_joining:emp.date_of_joining,
         job_category:emp.job_category_name},
-      period:{year:y,month:m,from,to,divisor,processDay,paidDays,deductedDays},
+      period:{year:y,month:m,from,to,divisor,processDay,paidDays,deductedDays,workingDaysInMonth,absentDays},
       attendance:{presentDays,absentDays:divisor-presentDays,lateDays,halfDays,totalDays:divisor},
       leaves:{clUsed,clAllowed,clExcess,slUsed,slAllowed,slExcess,unauthLeaves},
       earnings:{salary,dailyRate:r(dailyRate),earnedGross:r(earnedGross)},
