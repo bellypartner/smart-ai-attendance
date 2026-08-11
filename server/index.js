@@ -1202,10 +1202,10 @@ app.get('/api/salary-report', auth(['super_admin', 'org_admin', 'branch_admin'])
       const wdm = 30;
       const dailyRate = emp.salary / wdm;
       // paidDays based on actual attendance
-    // absentDays/paidDays already calculated above
-    const deductedDays2 = Math.max(0, absentDays) + (halfDays * 0.5);
-    const paidDays2 = Math.max(0, Math.min(30, 30 - deductedDays2));
-    const earnedGross = paidDays2 * dailyRate;
+    const absentDays = Math.max(0, wdim - presentDays);
+    const deductedDays = absentDays + (halfDays * 0.5);
+    const paidDays = Math.max(0, Math.min(30, 30 - deductedDays));
+    const earnedGross = paidDays * dailyRate;
       const excessLates = Math.max(0, lateDays - (s.max_allowed_lates_per_month || 3));
       const lateDeductions = lateDays * (s.late_deduction_per_occ || 50) + excessLates * (s.excess_late_penalty || 100);
       const leaveDeductions = 0; // leave days already reduce paidDays
