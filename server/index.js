@@ -691,9 +691,12 @@ app.post('/api/attendance/checkin', auth(['employee','branch_admin']), async (re
     const { date, time } = nowIST();
 
     const existing = await db(
-      'SELECT id FROM attendance_records WHERE employee_id=$1 AND date=$2',
+      'SELECT id FROM attendance_records WHERE employee_id=$1 AND date=$2 AND check_in_time IS NOT NULL',
       [req.user.id, date]);
     if (existing.rows[0]) return res.status(400).json({ error: 'Already checked in today' });
+    // Clear any ghost records (null check_in_time) before new checkin
+    await db('DELETE FROM attendance_records WHERE employee_id=$1 AND date=$2 AND check_in_time IS NULL',
+      [req.user.id, date]).catch(()=>{});
 
     // Resolve shift: override → schedule → default
     const { rows: schedRows } = await db(`
@@ -1095,7 +1098,9 @@ app.get('/api/my-salary', auth(['employee','branch_admin']), async (req, res) =>
     const divisor = cat?.working_days_type || workingDays;
     const dailyRate = salary / divisor;
     const hourlyRate = dailyRate / 8;
-    const earnedGross = presentDays * dailyRate;
+    const deductedDays = unauthLeaves + clExcess + slExcess + (halfDays * 0.5);
+    const paidDays = Math.max(0, 30 - deductedDays);
+    const earnedGross = paidDays * dailyRate;
 
     const monthlyGraceDays = s.monthly_grace_days || 3;
     const chronicThreshold = s.chronic_late_threshold || 6;
@@ -1106,7 +1111,7 @@ app.get('/api/my-salary', auth(['employee','branch_admin']), async (req, res) =>
       (excessLates > 0 ? excessLates * (s.excess_late_deduction || 100) : 0) +
       (lateDays >= chronicThreshold ? excessLates * (s.chronic_late_deduction || 200) : 0);
 
-    const leaveDeductions = (unauthLeaves * dailyRate) + (clExcess * dailyRate) + (slExcess * dailyRate);
+    const leaveDeductions = 0; // already factored into paidDays in earnedGross
     const noShowDeductions = noShows * dailyRate;
     const earlyDeductions = earlyCheckouts * (s.early_checkout_flat_penalty || 50) +
       Math.round((earlyMinsTotal / 60) * hourlyRate);
@@ -1185,10 +1190,12 @@ app.get('/api/salary-report', auth(['super_admin', 'org_admin', 'branch_admin'])
       const casualUsed = lvs.filter(l => l.type === 'casual').length;
       const wdm = 30;
       const dailyRate = emp.salary / wdm;
-      const earnedGross = presentDays * dailyRate;
+      const deductedDays = unauthLeaves + clExcess + slExcess + (halfDays * 0.5);
+    const paidDays = Math.max(0, 30 - deductedDays);
+    const earnedGross = paidDays * dailyRate;
       const excessLates = Math.max(0, lateDays - (s.max_allowed_lates_per_month || 3));
       const lateDeductions = lateDays * (s.late_deduction_per_occ || 50) + excessLates * (s.excess_late_penalty || 100);
-      const leaveDeductions = unauthLeaves * (s.unauth_leave_penalty || 200);
+      const leaveDeductions = 0; // leave days already reduce paidDays
       const noShowDeductions = noShows * (s.no_show_penalty || 250);
       // Include advance deductions
       const { rows: empAdvRows } = await db(`SELECT COALESCE(SUM(amount),0) AS adv FROM salary_advances WHERE employee_id=$1
@@ -2020,12 +2027,14 @@ app.get('/api/salary-slip', auth(), async (req, res) => {
     const earlyMins=earlyOuts.reduce((s,a)=>s+Number(a.early_mins||0),0);
     const clAllowed=Number(emp.cl_per_month||0), slAllowed=Number(emp.sl_per_month||0);
     const clExcess=Math.max(0,clUsed-clAllowed), slExcess=Math.max(0,slUsed-slAllowed);
-    const earnedGross=presentDays*dailyRate;
+    const deductedDays = unauthLeaves + clExcess + slExcess + (halfDays * 0.5);
+    const paidDays = Math.max(0, 30 - deductedDays);
+    const earnedGross = paidDays * dailyRate;
     const grace=st.monthly_grace_days||3;
     const normalLates=Math.min(lateDays,grace), excessLates=Math.max(0,lateDays-grace);
     const lateDeduct=normalLates*(st.late_deduction_per_occ||50)+excessLates*(st.excess_late_deduction||100);
-    const halfDeduct=halfDays*(dailyRate/2);
-    const leaveDeduct=(unauthLeaves+clExcess+slExcess)*dailyRate;
+    const halfDeduct=0; // half days already in deductedDays
+    const leaveDeduct=0; // Leave days already reduce paidDays in earnedGross
     const earlyDeduct=earlyOuts.length*(st.early_checkout_flat_penalty||50)+Math.round((earlyMins/60)*hourlyRate);
     const advDeduct=Number(advR.rows[0]?.adv||0);
     const adjBonus=adjRows.filter(a=>a.type==='bonus').reduce((s,a)=>s+Number(a.amount),0);
@@ -2037,7 +2046,7 @@ app.get('/api/salary-slip', auth(), async (req, res) => {
       employee:{name:emp.name,designation:emp.designation,employee_code:emp.employee_code,
         branch_name:emp.branch_name,org_name:emp.org_name,date_of_joining:emp.date_of_joining,
         job_category:emp.job_category_name},
-      period:{year:y,month:m,from,to,divisor,processDay},
+      period:{year:y,month:m,from,to,divisor,processDay,paidDays,deductedDays},
       attendance:{presentDays,absentDays:divisor-presentDays,lateDays,halfDays,totalDays:divisor},
       leaves:{clUsed,clAllowed,clExcess,slUsed,slAllowed,slExcess,unauthLeaves},
       earnings:{salary,dailyRate:r(dailyRate),earnedGross:r(earnedGross)},
