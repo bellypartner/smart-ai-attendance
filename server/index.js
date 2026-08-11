@@ -1188,6 +1188,12 @@ app.get('/api/salary-report', auth(['super_admin', 'org_admin', 'branch_admin'])
       const unauthLeaves = lvs.filter(l => l.type === 'unauthorized').length;
       const noShows = lvs.filter(l => l.type === 'noshow').length;
       const casualUsed = lvs.filter(l => l.type === 'casual').length;
+      const sickUsed = lvs.filter(l => l.type === 'sick').length;
+      const halfDays = lvs.filter(l => l.type === 'half_day').length;
+      const clAllowed = Number(emp.cl_per_month||0);
+      const slAllowed = Number(emp.sl_per_month||0);
+      const clExcess = Math.max(0, casualUsed - clAllowed);
+      const slExcess = Math.max(0, sickUsed - slAllowed);
       const wdm = 30;
       const dailyRate = emp.salary / wdm;
       const deductedDays = unauthLeaves + clExcess + slExcess + (halfDays * 0.5);

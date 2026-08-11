@@ -411,7 +411,7 @@ function EmpHome({user, branch, todayAtt, loading, onScan}) {
       </div>
 
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
-        {[["Check In",cin?.check_in_time,"▶",C.g600,cin?.is_late?`${cin.late_mins}m late`:"On time"],
+        {[["Check In",cin?.check_in_time?String(cin.check_in_time).slice(0,5):"—","▶",C.g600,cin?.is_late?`${cin.late_mins}m late`:"On time"],
           ["Check Out",cout?.check_out_time,"⏹",C.indigo,"—"]].map(([l,t,ic,c,sub])=>(
           <div key={l} style={{background:C.white,borderRadius:16,padding:14,boxShadow:`0 2px 8px ${C.g300}33`}}>
             <p style={{color:C.gr500,fontSize:11,fontWeight:600}}>{l}</p>
@@ -425,9 +425,9 @@ function EmpHome({user, branch, todayAtt, loading, onScan}) {
             {isMobile()
         ? <button onClick={onScan} disabled={status==="done"||loading}
         style={{width:"100%",background:status==="done"?C.gr300:`linear-gradient(135deg,${C.g700},${C.g500})`,border:"none",borderRadius:20,padding:"20px",cursor:status==="done"?"not-allowed":"pointer",color:C.white,display:"flex",flexDirection:"column",alignItems:"center",gap:6,animation:status!=="done"?"glow 3s infinite":"none",marginBottom:18}}>
-        <span style={{fontSize:32}}>📍</span>
+        <span style={{fontSize:32}}>{status==="in"?"✅":"📍"}</span>
         <span style={{fontSize:16,fontWeight:800}}>{status==="out"?"Mark Check In":status==="in"?"Mark Check Out":status==="between"?"Mark Check In — Shift 2":"Day Complete ✓"}</span>
-        <span style={{fontSize:12,opacity:0.75}}>Geo-fenced · Tap to mark attendance</span>
+        <span style={{fontSize:12,opacity:0.75}}>{status==="in"?`Checked in at ${String(cin?.check_in_time||"").slice(0,5)} · Tap to checkout`:"Geo-fenced · Tap"} to mark attendance</span>
       </button>
         : (status!=="done"&&<div style={{background:"#f0faf4",border:"1.5px dashed #86efac",borderRadius:18,padding:"20px",textAlign:"center",marginBottom:18}}>
             <p style={{fontSize:24,marginBottom:6}}>💻</p>
@@ -1440,44 +1440,34 @@ function AdminReports({user, notify, activeOrgId}) {
           <button onClick={()=>{
             const html="<html><head><title>Salary Slip</title><style>body{font-family:Arial;padding:20px}h2{color:#166534}table{width:100%;border-collapse:collapse}td{padding:8px;border-bottom:1px solid #eee}td:last-child{text-align:right}.net{background:#166534;color:#fff;font-weight:900;font-size:18px}</style></head><body>"
               +"<h2>"+(sl.employee?.org_name||"")+"</h2><h3>Salary Slip — "+(mn[sm-1]||"")+" "+sy+"</h3>"
-              +"<p><b>"+(sl.employee?.name||"")+"</b> | "+(sl.employee?.designation||"")+" | "+(sl.employee?.branch_name||"")+"</p>"
-              +"<p>Code: "+(sl.employee?.employee_code||"—")+"</p><hr/>"
+              +"<p><b>"+(sl.employee?.name||"")+"</b> | "+(sl.employee?.designation||"")+" | "+(sl.employee?.branch_name||"")+"</p><hr/>"
               +"<table><tr><td>Basic Salary</td><td>"+f2(sl.earnings?.salary)+"</td></tr>"
-              +"<tr><td>Days Present / "+(sl.period?.divisor||30)+"</td><td>"+(sl.attendance?.presentDays||0)+"</td></tr>"
+              +"<tr><td>Paid Days / 30</td><td>"+(sl.period?.paidDays||0)+"</td></tr>"
+              +"<tr><td>Unauthorized Leaves</td><td>"+(sl.attendance?.unauthLeaves||sl.leaves?.unauthLeaves||0)+"</td></tr>"
               +"<tr><td>Half Days</td><td>"+(sl.attendance?.halfDays||0)+"</td></tr>"
               +"<tr><td><b>Gross Earned</b></td><td><b>"+f2(sl.earnings?.earnedGross)+"</b></td></tr>"
               +"<tr><td colspan=2 style='background:#f3f4f6;font-weight:700;font-size:12px'>DEDUCTIONS</td></tr>"
               +"<tr><td>Late Penalty</td><td>-"+f2(sl.deductions?.lateDeduct)+"</td></tr>"
-              +"<tr><td>Half Day</td><td>-"+f2(sl.deductions?.halfDeduct)+"</td></tr>"
-              +"<tr><td>Leave Deduction</td><td>-"+f2(sl.deductions?.leaveDeduct)+"</td></tr>"
               +"<tr><td>Early Checkout</td><td>-"+f2(sl.deductions?.earlyDeduct)+"</td></tr>"
               +"<tr><td>Advance Recovery</td><td>-"+f2(sl.deductions?.advDeduct)+"</td></tr>"
               +((sl.deductions?.adjDeduct||0)>0?"<tr><td>Manual Deduction</td><td>-"+f2(sl.deductions?.adjDeduct)+"</td></tr>":"")
               +((sl.deductions?.adjBonus||0)>0?"<tr><td>Bonus</td><td>+"+f2(sl.deductions?.adjBonus)+"</td></tr>":"")
               +"<tr class='net'><td>NET PAYABLE</td><td>"+f2(sl.netEarned)+"</td></tr></table>"
-              +"<div style='margin-top:30px;display:flex;justify-content:space-between'>"
-              +"<div style='text-align:center;border-top:1px solid #000;padding-top:6px;width:180px'>Employee Signature</div>"
-              +"<div style='text-align:center;border-top:1px solid #000;padding-top:6px;width:180px'>Authorised Signatory</div></div>"
+              +"<div style='margin-top:30px;display:flex;justify-content:space-between'><div style='text-align:center;border-top:1px solid #000;padding-top:6px;width:180px'>Employee Signature</div><div style='text-align:center;border-top:1px solid #000;padding-top:6px;width:180px'>Authorised Signatory</div></div>"
               +"</body></html>";
             const w=window.open("","_blank");
             if(w){w.document.write(html);w.document.close();setTimeout(()=>w.print(),500);}
           }} style={{background:"#7c3aed",border:"none",borderRadius:10,color:"#fff",padding:"8px 16px",cursor:"pointer",fontWeight:700}}>🖨 Print / PDF</button>
         </div>
-        <div style={{background:C.white,borderRadius:20,padding:20,boxShadow:`0 2px 12px ${C.g300}44`}}>
+        <div style={{background:C.white,borderRadius:20,padding:20}}>
           <h2 style={{color:C.g800,textAlign:"center",fontWeight:900}}>{sl.employee?.org_name}</h2>
           <p style={{textAlign:"center",color:C.gr500,marginBottom:16}}>Salary Slip — {mn[sm-1]} {sy}</p>
-          <div style={{background:C.g50,borderRadius:14,padding:14,marginBottom:16,display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-            {[["Name",sl.employee?.name],["Designation",sl.employee?.designation||"—"],["Branch",sl.employee?.branch_name||"—"],["Code",sl.employee?.employee_code||"—"],["Category",sl.employee?.job_category||"—"],["Process Day",(sl.period?.processDay||10)+"th"]].map(([l,v])=>(
-              <div key={l}><p style={{color:C.gr400,fontSize:11}}>{l}</p><p style={{color:C.g800,fontWeight:700,fontSize:13}}>{v}</p></div>
-            ))}
-          </div>
           {[["Basic Salary",f2(sl.earnings?.salary),false],
-            ["Days Present",(sl.attendance?.presentDays||0)+"/"+(sl.period?.divisor||30),false],
+            ["Paid Days",(sl.period?.paidDays||0)+"/30",false],
+            ["Unauthorized Leaves",(sl.leaves?.unauthLeaves||0),false],
             ["Half Days",(sl.attendance?.halfDays||0),false],
             ["Gross Earned",f2(sl.earnings?.earnedGross),false],
             ["Late Penalty","-"+f2(sl.deductions?.lateDeduct),true],
-            ["Half Day Deduction","-"+f2(sl.deductions?.halfDeduct),true],
-            ["Leave Deduction","-"+f2(sl.deductions?.leaveDeduct),true],
             ["Early Checkout","-"+f2(sl.deductions?.earlyDeduct),true],
             ["Advance Recovery","-"+f2(sl.deductions?.advDeduct),true],
             ...((sl.deductions?.adjDeduct||0)>0?[["Manual Deduction","-"+f2(sl.deductions?.adjDeduct),true]]:[]),
@@ -1496,7 +1486,6 @@ function AdminReports({user, notify, activeOrgId}) {
       </div>
     );
   }
-
   if(!report) return <Empty icon="📊" msg="No report data"/>;
 
   let list=report.report||[];
@@ -1529,7 +1518,7 @@ function AdminReports({user, notify, activeOrgId}) {
             <div style={{textAlign:"right"}}><p style={{color:C.g700,fontWeight:900,fontSize:17}}>{fmt(e.netEarned||0)}</p>{(e.totalDeductions||0)>0&&<p style={{color:C.red,fontSize:12}}>-{fmt(e.totalDeductions)}</p>}</div>
           </div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-            {[["Present",e.presentDays,C.g600],["Half Day",e.halfDays||0,"#7c3aed"],["Late",e.lateDays,C.amber],["CL",e.casualUsed,C.blue],["Unauth",e.unauthLeaves,C.red]].map(([l,v,c])=>(
+            {[["Present",e.presentDays,C.g600],["Unauth",e.unauthLeaves,C.red],["Half",e.halfDays||0,"#7c3aed"],["Late",e.lateDays,C.amber],["CL",e.casualUsed,C.blue]].map(([l,v,c])=>(
               <span key={l} style={{background:`${c}15`,color:c,fontSize:12,padding:"3px 10px",borderRadius:20,fontWeight:700}}>{l}: {v||0}</span>
             ))}
           </div>
@@ -1537,7 +1526,7 @@ function AdminReports({user, notify, activeOrgId}) {
             const[sy,sm]=selMonth.split('-').map(Number);
             try{const slip=await GET("/api/salary-slip",{employee_id:e.id,year:sy,month:sm});setSlipPreview(slip);}
             catch(err){notify(err.message,"error");}
-          }} style={{marginTop:8,background:"#7c3aed",border:"none",borderRadius:10,color:"#fff",padding:"8px 16px",cursor:"pointer",fontSize:12,fontWeight:700,width:"100%"}}>📄 View Salary Slip</button>
+          }} style={{marginTop:8,background:"#7c3aed",border:"none",borderRadius:10,color:"#fff",padding:"8px 14px",cursor:"pointer",fontSize:12,fontWeight:700,width:"100%"}}>📄 View Salary Slip</button>
         </div>
       ))}
       {list.length===0&&<Empty icon="📊" msg="No data for this month"/>}
@@ -1965,16 +1954,14 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
                     {days.map(ds => {
                       const st = getStatus(emp.id, ds);
                       const isSun = new Date(ds + "T12:00:00").getDay() === 0;
-                      if (!isSun) {
-                        if (["present","late"].includes(st.type)) { pCount++; if (st.type === "late") lateCount++; }
-                        else if (st.type === "absent") aCount++;
-                        else lCount++;
-                      }
+                      if (["present","late"].includes(st.type)) { pCount++; if (st.type === "late") lateCount++; }
+                      else if (st.type === "absent" && !isSun) aCount++;
+                      else if (!isSun) lCount++;
                       return (
                         <td key={ds} style={{ padding: "3px 2px", textAlign: "center", background: isSun ? "#f9fafb" : "transparent" }}>
-                          <button onClick={() => !isSun && openEdit(emp.id, ds, emp.name)}
-                            style={{ background: isSun ? "transparent" : st.bg, color: isSun ? "#d1d5db" : st.color, border: "none", borderRadius: 6, padding: "3px 3px", fontSize: 10, fontWeight: 700, cursor: isSun ? "default" : "pointer", minWidth: 26 }}>
-                            {isSun ? "—" : st.label}
+                          <button onClick={() => openEdit(emp.id, ds, emp.name)}
+                            style={{ background: isSun && st.type==="absent" ? "#fef3c7" : st.bg, color: isSun && st.type==="absent" ? "#d97706" : st.color, border: "none", borderRadius: 6, padding: "3px 3px", fontSize: 10, fontWeight: 700, cursor: isSun && st.type==="absent" ? "default" : "pointer", minWidth: 26 }}>
+                            {isSun && st.type==="absent" ? "☀" : st.label}
                           </button>
                         </td>
                       );
