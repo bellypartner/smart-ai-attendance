@@ -1768,7 +1768,8 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
         ? { type: "late", label: `L${rec.late_mins || ""}`, color: "#d97706", bg: "#fef3c7", rec }
         : { type: "present", label: "P", color: "#16a34a", bg: "#dcfce7", rec };
     }
-    return { type: "absent", label: "A", color: "#dc2626", bg: "#fee2e2" };
+    if(dateStr > today()) return { type:"future", label:"—", color:"#d1d5db", bg:"#f9fafb", rec:null };
+return { type: "absent", label: "A", color: "#dc2626", bg: "#fee2e2" };
   };
 
   const openEdit = (empId, date, empName) => {

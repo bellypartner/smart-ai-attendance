@@ -1167,7 +1167,7 @@ app.get('/api/salary-report', auth(['super_admin', 'org_admin', 'branch_admin'])
                jc.sunday_off, jc.name AS job_category_name
           FROM users u LEFT JOIN branches b ON b.id=u.branch_id
           LEFT JOIN job_categories jc ON jc.id=u.job_category_id
-          WHERE u.org_id=$1 AND u.role IN ('employee','branch_admin') AND (u.is_active=true OR (u.relieving_date IS NOT NULL AND u.relieving_date::date >= $1::date))
+          WHERE u.org_id=$1 AND u.role IN ('employee','branch_admin') AND (u.is_active=true OR (u.relieving_date IS NOT NULL AND u.relieving_date::date >= $2::date)
           ${req.user.role === 'branch_admin' ? "AND u.branch_id='" + req.user.branch_id + "'" : ''}
           ORDER BY u.name`, [oid]),
       db('SELECT * FROM org_settings WHERE org_id=$1', [oid]),
