@@ -616,7 +616,7 @@ app.get('/api/attendance', auth(), async (req, res) => {
              b.name AS branch_name, st.name AS shift_name,
              st.start_time AS shift_start, st.end_time AS shift_end
       FROM attendance_records ar
-      JOIN users u ON u.id = ar.employee_id
+      JOIN users u ON u.id = ar.employee_id AND u.is_active = true
       LEFT JOIN branches b ON b.id = ar.branch_id
       LEFT JOIN shift_templates st ON st.id = ar.shift_id
       WHERE ar.org_id = $1
@@ -823,9 +823,11 @@ app.post('/api/attendance/checkout', auth(['employee','branch_admin']), async (r
       `UPDATE attendance_records SET check_out_time=$1,worked_mins=$2,
        checkout_type='manual', is_auto_checkout=false,
        is_early_checkout=$3, early_mins=$4,
+       checkout_geo_lat=$7, checkout_geo_lng=$8, checkout_geo_verified=$9,
        notes=CASE WHEN $5 THEN 'Auto-capped: checked out 4h+ after shift end' ELSE notes END
        WHERE id=$6`,
-      [checkoutTime,workedMins,isEarly,earlyMins,capped,rec.id]
+      [checkoutTime,workedMins,isEarly,earlyMins,capped,rec.id,
+       geo_lat||null, geo_lng||null, !!geo_verified]
     );
     res.json({ok:true,worked_mins:workedMins,slot:rec.slot||1,capped,is_early:isEarly,early_mins:earlyMins,
       message:capped?`Checkout capped at shift end (${checkoutTime})`:isEarly?`Early checkout — ${earlyMins} mins before shift end`:null});
@@ -1167,11 +1169,11 @@ app.get('/api/salary-report', auth(['super_admin', 'org_admin', 'branch_admin'])
                jc.sunday_off, jc.name AS job_category_name
           FROM users u LEFT JOIN branches b ON b.id=u.branch_id
           LEFT JOIN job_categories jc ON jc.id=u.job_category_id
-          WHERE u.org_id=$1 AND u.role IN ('employee','branch_admin') 
-          AND u.is_active=true AND u.status NOT IN ('relieved','terminated')
+          WHERE u.org_id=$1 AND u.role IN ('employee','branch_admin') AND u.is_active=true AND u.status NOT IN ('relieved','terminated')
           ${req.user.role === 'branch_admin' ? 'AND u.branch_id=$2' : ''}
           ORDER BY u.name`,
   req.user.role === 'branch_admin' ? [oid, req.user.branch_id] : [oid]),
+      db('SELECT * FROM org_settings WHERE org_id=$1', [oid]),
     ]);
     const s = settRows[0] || {};
 
@@ -1203,10 +1205,10 @@ app.get('/api/salary-report', auth(['super_admin', 'org_admin', 'branch_admin'])
       const wdm = 30;
       const dailyRate = emp.salary / wdm;
       // paidDays based on actual attendance
-    const absentDays = Math.max(0, wdim - presentDays);
-    const deductedDays = absentDays + (halfDays * 0.5);
-    const paidDays = Math.max(0, Math.min(30, 30 - deductedDays));
-    const earnedGross = paidDays * dailyRate;
+    // absentDays/paidDays already calculated above
+    const deductedDays2 = Math.max(0, absentDays) + (halfDays * 0.5);
+    const paidDays2 = Math.max(0, Math.min(30, 30 - deductedDays2));
+    const earnedGross = paidDays2 * dailyRate;
       const excessLates = Math.max(0, lateDays - (s.max_allowed_lates_per_month || 3));
       const lateDeductions = lateDays * (s.late_deduction_per_occ || 50) + excessLates * (s.excess_late_penalty || 100);
       const leaveDeductions = 0; // leave days already reduce paidDays

@@ -327,6 +327,12 @@ function EmpApp({user, notify, page, setPage, onLogout}) {
           processAtt(qd.branchId, pos.coords);
         },
         (geoErr) => {
+          if(todayAtt?.cin) {
+            // Checkout - block if no location
+            notify("📍 Location required to check out. Enable GPS and try again.","error");
+            return;
+          }
+          // Checkin - allow without location
           const msg = geoErr.code===1
             ? "⚠ Location permission denied — marking without geo verification"
             : "⚠ GPS unavailable — marking without geo verification";
@@ -427,7 +433,7 @@ function EmpHome({user, branch, todayAtt, loading, onScan}) {
         style={{width:"100%",background:status==="done"?C.gr300:`linear-gradient(135deg,${C.g700},${C.g500})`,border:"none",borderRadius:20,padding:"20px",cursor:status==="done"?"not-allowed":"pointer",color:C.white,display:"flex",flexDirection:"column",alignItems:"center",gap:6,animation:status!=="done"?"glow 3s infinite":"none",marginBottom:18}}>
         <span style={{fontSize:32}}>{status==="in"?"✅":"📍"}</span>
         <span style={{fontSize:16,fontWeight:800}}>{status==="out"?"Mark Check In":status==="in"?"Mark Check Out":status==="between"?"Mark Check In — Shift 2":"Day Complete ✓"}</span>
-        <span style={{fontSize:12,opacity:0.75}}>{status==="in"?`Checked in at ${String(cin?.check_in_time||"").slice(0,5)} · Tap to checkout`:"Geo-fenced · Tap"} to mark attendance</span>
+        <span style={{fontSize:12,opacity:0.75}}>{status==="in"?`Checked in at ${String(cin?.check_in_time||"").slice(0,5)} · Tap to check out · Location required`:"Tap to mark attendance · Geo-fenced"} to mark attendance</span>
       </button>
         : (status!=="done"&&<div style={{background:"#f0faf4",border:"1.5px dashed #86efac",borderRadius:18,padding:"20px",textAlign:"center",marginBottom:18}}>
             <p style={{fontSize:24,marginBottom:6}}>💻</p>
@@ -1768,8 +1774,7 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
         ? { type: "late", label: `L${rec.late_mins || ""}`, color: "#d97706", bg: "#fef3c7", rec }
         : { type: "present", label: "P", color: "#16a34a", bg: "#dcfce7", rec };
     }
-    if(dateStr > today()) return { type:"future", label:"—", color:"#d1d5db", bg:"#f9fafb", rec:null };
-return { type: "absent", label: "A", color: "#dc2626", bg: "#fee2e2" };
+    return { type: "absent", label: "A", color: "#dc2626", bg: "#fee2e2" };
   };
 
   const openEdit = (empId, date, empName) => {
