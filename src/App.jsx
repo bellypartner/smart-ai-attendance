@@ -296,20 +296,15 @@ function EmpApp({user, notify, page, setPage, onLogout}) {
 
   const load = useCallback(async () => {
     try {
-     const yesterday = new Date(); yesterday.setDate(yesterday.getDate()-1);
-      const yDate = yesterday.toISOString().split('T')[0];
-      const [br, att, yAtt] = await Promise.all([
+      const [br, att] = await Promise.all([
         GET("/api/branches"),
         GET("/api/attendance", {date: today(), employee_id: user.id}),
-        GET("/api/attendance", {date: yDate, employee_id: user.id}).catch(()=>[]),
       ]);
-      const ySlot = (yAtt||[]).find(r=>(r.slot===1||!r.slot)&&r.is_auto_checkout);
-      const hadAutoCheckout = !!ySlot;
       setBranches(br||[]);
       const cin = (att||[]).find(r=>r.type==="checkin");
       const cout = (att||[]).find(r=>r.type==="checkout");
       setTodayAtt({cin, cout});
-    } catch(e) { notify(e.message,"error"); console.error("LOAD ERR:", e); }
+    } catch(e) { notify(e.message,"error"); }
     finally { setLoading(false); }
   },[user.id]);
 
@@ -332,17 +327,13 @@ function EmpApp({user, notify, page, setPage, onLogout}) {
           processAtt(qd.branchId, pos.coords);
         },
         (geoErr) => {
-          if(todayAtt?.cin) {
-            // Checkout - block if no location
+          if(todayAtt?.cin){
             notify("📍 Location required to check out. Enable GPS and try again.","error");
             return;
           }
-          // Checkin - allow without location
-          const msg = geoErr.code===1
-            ? "⚠ Location permission denied — marking without geo verification"
-            : "⚠ GPS unavailable — marking without geo verification";
-          notify(msg, "warn");
-          processAtt(qd.branchId, null);
+          const msg=geoErr.code===1?"⚠ Location permission denied — marking without geo":"⚠ GPS unavailable — marking without geo";
+          notify(msg,"warn");
+          processAtt(qd.branchId,null);
         },
         {timeout:10000, enableHighAccuracy:true, maximumAge:0}
       );
@@ -376,7 +367,7 @@ function EmpApp({user, notify, page, setPage, onLogout}) {
 
   const empNav=[{k:"home",i:"🏠",l:"Home"},{k:"shifts",i:"📅",l:"Shifts"},{k:"history",i:"📋",l:"History"},{k:"salary",i:"💰",l:"Salary"},{k:"advances",i:"💳",l:"Advance"},{k:"calendar",i:"📅",l:"Calendar"},{k:"profile",i:"👤",l:"Profile"}];
   const pages={
-    home: <EmpHome user={user} branch={myBranch} todayAtt={todayAtt} loading={loading} onScan={()=>setShowScanner(true)} hadAutoCheckout={hadAutoCheckout}/>,
+    home: <EmpHome user={user} branch={myBranch} todayAtt={todayAtt} loading={loading} onScan={()=>setShowScanner(true)}/>,
     shifts: <EmpShifts user={user} notify={notify}/>,
     history: <EmpHistory user={user} notify={notify}/>,
     salary: <EmpSalary user={user} notify={notify}/>,
@@ -420,10 +411,9 @@ function EmpHome({user, branch, todayAtt, loading, onScan}) {
           <span style={{background:sc.bg,color:sc.color,fontSize:11,padding:"4px 10px",borderRadius:20,fontWeight:700}}>{sc.label}</span>
         </div>
       </div>
-      
 
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
-        {[["Check In",cin?.check_in_time?String(cin.check_in_time).slice(0,5):"—","▶",cin?C.g600:C.gr300,cin?.is_late?`⚠ ${cin.late_mins}m late`:"✓ On time"],
+        {[["Check In",cin?.check_in_time,"▶",C.g600,cin?.is_late?`${cin.late_mins}m late`:"On time"],
           ["Check Out",cout?.check_out_time,"⏹",C.indigo,"—"]].map(([l,t,ic,c,sub])=>(
           <div key={l} style={{background:C.white,borderRadius:16,padding:14,boxShadow:`0 2px 8px ${C.g300}33`}}>
             <p style={{color:C.gr500,fontSize:11,fontWeight:600}}>{l}</p>
@@ -439,7 +429,7 @@ function EmpHome({user, branch, todayAtt, loading, onScan}) {
         style={{width:"100%",background:status==="done"?C.gr300:`linear-gradient(135deg,${C.g700},${C.g500})`,border:"none",borderRadius:20,padding:"20px",cursor:status==="done"?"not-allowed":"pointer",color:C.white,display:"flex",flexDirection:"column",alignItems:"center",gap:6,animation:status!=="done"?"glow 3s infinite":"none",marginBottom:18}}>
         <span style={{fontSize:32}}>{status==="in"?"✅":"📍"}</span>
         <span style={{fontSize:16,fontWeight:800}}>{status==="out"?"Mark Check In":status==="in"?"Mark Check Out":status==="between"?"Mark Check In — Shift 2":"Day Complete ✓"}</span>
-        <span style={{fontSize:12,opacity:0.75}}>{status==="in"?`Checked in at ${String(cin?.check_in_time||"").slice(0,5)} · Tap to check out · Location required`:"Tap to mark attendance · Geo-fenced"} to mark attendance</span>
+        <span style={{fontSize:12,opacity:0.75}}>Geo-fenced · Tap to mark attendance</span>
       </button>
         : (status!=="done"&&<div style={{background:"#f0faf4",border:"1.5px dashed #86efac",borderRadius:18,padding:"20px",textAlign:"center",marginBottom:18}}>
             <p style={{fontSize:24,marginBottom:6}}>💻</p>
@@ -702,6 +692,7 @@ function AdminApp({user, notify, page, setPage, activeOrgId, setActiveOrgId, onL
     {k:"adm_shifts",i:"📅",l:"Shifts"},
     {k:"adm_override",i:"⚡",l:"Override"},
     {k:"adm_approvals",i:"✅",l:"Approvals"},
+    {k:"adm_qr",i:"📷",l:"QR"},
     ...(isSA||isOA?[{k:"adm_reports",i:"📊",l:"Reports"}]:[]),
     {k:"adm_settings",i:"⚙️",l:"Settings"},
     {k:"adm_att_table",i:"📊",l:"Att."},
@@ -1455,7 +1446,6 @@ function AdminReports({user, notify, activeOrgId}) {
               +"<p><b>"+(sl.employee?.name||"")+"</b> | "+(sl.employee?.designation||"")+" | "+(sl.employee?.branch_name||"")+"</p><hr/>"
               +"<table><tr><td>Basic Salary</td><td>"+f2(sl.earnings?.salary)+"</td></tr>"
               +"<tr><td>Paid Days / 30</td><td>"+(sl.period?.paidDays||0)+"</td></tr>"
-              +"<tr><td>Unauthorized Leaves</td><td>"+(sl.attendance?.unauthLeaves||sl.leaves?.unauthLeaves||0)+"</td></tr>"
               +"<tr><td>Half Days</td><td>"+(sl.attendance?.halfDays||0)+"</td></tr>"
               +"<tr><td><b>Gross Earned</b></td><td><b>"+f2(sl.earnings?.earnedGross)+"</b></td></tr>"
               +"<tr><td colspan=2 style='background:#f3f4f6;font-weight:700;font-size:12px'>DEDUCTIONS</td></tr>"
@@ -1474,13 +1464,9 @@ function AdminReports({user, notify, activeOrgId}) {
         <div style={{background:C.white,borderRadius:20,padding:20}}>
           <h2 style={{color:C.g800,textAlign:"center",fontWeight:900}}>{sl.employee?.org_name}</h2>
           <p style={{textAlign:"center",color:C.gr500,marginBottom:16}}>Salary Slip — {mn[sm-1]} {sy}</p>
-          {[["Basic Salary",f2(sl.earnings?.salary),false],
-            ["Paid Days",(sl.period?.paidDays||0)+"/30",false],
-            ["Unauthorized Leaves",(sl.leaves?.unauthLeaves||0),false],
-            ["Half Days",(sl.attendance?.halfDays||0),false],
-            ["Gross Earned",f2(sl.earnings?.earnedGross),false],
-            ["Late Penalty","-"+f2(sl.deductions?.lateDeduct),true],
-            ["Early Checkout","-"+f2(sl.deductions?.earlyDeduct),true],
+          {[["Basic Salary",f2(sl.earnings?.salary),false],["Paid Days",(sl.period?.paidDays||0)+"/30",false],
+            ["Half Days",(sl.attendance?.halfDays||0),false],["Gross Earned",f2(sl.earnings?.earnedGross),false],
+            ["Late Penalty","-"+f2(sl.deductions?.lateDeduct),true],["Early Checkout","-"+f2(sl.deductions?.earlyDeduct),true],
             ["Advance Recovery","-"+f2(sl.deductions?.advDeduct),true],
             ...((sl.deductions?.adjDeduct||0)>0?[["Manual Deduction","-"+f2(sl.deductions?.adjDeduct),true]]:[]),
             ...((sl.deductions?.adjBonus||0)>0?[["Bonus","+"+f2(sl.deductions?.adjBonus),false]]:[]),
@@ -1530,7 +1516,7 @@ function AdminReports({user, notify, activeOrgId}) {
             <div style={{textAlign:"right"}}><p style={{color:C.g700,fontWeight:900,fontSize:17}}>{fmt(e.netEarned||0)}</p>{(e.totalDeductions||0)>0&&<p style={{color:C.red,fontSize:12}}>-{fmt(e.totalDeductions)}</p>}</div>
           </div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-            {[["Present",e.presentDays,C.g600],["Unauth",e.unauthLeaves,C.red],["Half",e.halfDays||0,"#7c3aed"],["Late",e.lateDays,C.amber],["CL",e.casualUsed,C.blue]].map(([l,v,c])=>(
+            {[["Present",e.presentDays,C.g600],["Half",e.halfDays||0,"#7c3aed"],["Late",e.lateDays,C.amber],["CL",e.casualUsed,C.blue],["Unauth",e.unauthLeaves,C.red]].map(([l,v,c])=>(
               <span key={l} style={{background:`${c}15`,color:c,fontSize:12,padding:"3px 10px",borderRadius:20,fontWeight:700}}>{l}: {v||0}</span>
             ))}
           </div>
@@ -1771,7 +1757,7 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
   const getStatus = (empId, date) => {
     const leave = getLeave(empId, date);
     if (leave) {
-      const lc = { casual: { label:"CL", color:"#7c3aed", bg:"#ede9fe" }, unauthorized: { label:"UL", color:"#dc2626", bg:"#fee2e2" }, noshow: { label:"NS", color:"#ea580c", bg:"#ffedd5" }, half_day: { label:"H", color:"#7c3aed", bg:"#ede9fe" }, sick: { label:"SL", color:"#0891b2", bg:"#e0f2fe" } };
+      const lc = { casual:{label:"CL",color:"#7c3aed",bg:"#ede9fe"}, unauthorized:{label:"UL",color:"#dc2626",bg:"#fee2e2"}, noshow:{label:"NS",color:"#ea580c",bg:"#ffedd5"}, half_day:{label:"H",color:"#7c3aed",bg:"#ede9fe"}, sick:{label:"SL",color:"#0891b2",bg:"#e0f2fe"} };
       return { type: "leave", ...(lc[leave.type] || { label: "L", color: "#7c3aed", bg: "#ede9fe" }) };
     }
     const rec = getRec(empId, date);
@@ -1966,14 +1952,16 @@ function AdminAttendanceTable({ user, notify, activeOrgId }) {
                     {days.map(ds => {
                       const st = getStatus(emp.id, ds);
                       const isSun = new Date(ds + "T12:00:00").getDay() === 0;
-                      if (["present","late"].includes(st.type)) { pCount++; if (st.type === "late") lateCount++; }
-                      else if (st.type === "absent" && !isSun) aCount++;
-                      else if (!isSun) lCount++;
+                      if (!isSun) {
+                        if (["present","late"].includes(st.type)) { pCount++; if (st.type === "late") lateCount++; }
+                        else if (st.type === "absent") aCount++;
+                        else lCount++;
+                      }
                       return (
                         <td key={ds} style={{ padding: "3px 2px", textAlign: "center", background: isSun ? "#f9fafb" : "transparent" }}>
                           <button onClick={() => openEdit(emp.id, ds, emp.name)}
-                            style={{ background: isSun && st.type==="absent" ? "#fef3c7" : st.bg, color: isSun && st.type==="absent" ? "#d97706" : st.color, border: "none", borderRadius: 6, padding: "3px 3px", fontSize: 10, fontWeight: 700, cursor: isSun && st.type==="absent" ? "default" : "pointer", minWidth: 26 }}>
-                            {isSun && st.type==="absent" ? "☀" : st.label}
+                            style={{ background: isSun&&st.type==="absent"?"#fef9c3":st.bg, color: isSun&&st.type==="absent"?"#ca8a04":st.color, border: "none", borderRadius: 6, padding: "3px 3px", fontSize: 10, fontWeight: 700, cursor: "pointer", minWidth: 26 }}>
+                            {isSun&&st.type==="absent"?"☀":st.label}
                           </button>
                         </td>
                       );
