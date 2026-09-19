@@ -402,7 +402,7 @@ function EmpHome({user, branch, todayAtt, loading, onScan, hadAutoCheckout}) {
 
   useEffect(()=>{
     const {from,to} = monthRange();
-    GET("/api/salary-report",{year:new Date().getFullYear(),month:new Date().getMonth()+1})
+    GET("/api/my-salary",{year:new Date().getFullYear(),month:new Date().getMonth()+1})
       .then(r=>{ const me=r.report?.find(e=>e.id===user.id); if(me)setStats(me); })
       .catch(()=>{});
   },[user.id]);
