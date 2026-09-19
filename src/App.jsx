@@ -301,15 +301,15 @@ function EmpApp({user, notify, page, setPage, onLogout}) {
       const [br, att, yAtt] = await Promise.all([
         GET("/api/branches"),
         GET("/api/attendance", {date: today(), employee_id: user.id}),
-        GET("/api/attendance", {date: yDate, employee_id: user.id}),
+        GET("/api/attendance", {date: yDate, employee_id: user.id}).catch(()=>[]),
       ]);
-      const ySlot = (yAtt||[]).find(r=>r.slot===1||!r.slot);
-      const hadAutoCheckout = ySlot?.is_auto_checkout && !ySlot?.check_out_time_manual;
+      const ySlot = (yAtt||[]).find(r=>(r.slot===1||!r.slot)&&r.is_auto_checkout);
+      const hadAutoCheckout = !!ySlot;
       setBranches(br||[]);
       const cin = (att||[]).find(r=>r.type==="checkin");
       const cout = (att||[]).find(r=>r.type==="checkout");
       setTodayAtt({cin, cout});
-    } catch(e) { notify(e.message,"error"); }
+    } catch(e) { notify(e.message,"error"); console.error("LOAD ERR:", e); }
     finally { setLoading(false); }
   },[user.id]);
 
