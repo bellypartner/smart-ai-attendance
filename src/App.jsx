@@ -412,6 +412,10 @@ function EmpHome({user, branch, todayAtt, loading, onScan}) {
         </div>
       </div>
 
+      {cin?.is_auto_checkout&&<div style={{background:"#fef3c7",borderRadius:14,padding:12,marginBottom:12,border:"1px solid #f59e0b",display:"flex",gap:10,alignItems:"flex-start"}}>
+        <span>⚠️</span>
+        <div><p style={{color:"#92400e",fontWeight:800,fontSize:13}}>Yesterday auto-checked out</p><p style={{color:"#b45309",fontSize:12}}>You didn't check out manually. Please check out on time today.</p></div>
+      </div>}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
         {[["Check In",cin?.check_in_time,"▶",C.g600,cin?.is_late?`${cin.late_mins}m late`:"On time"],
           ["Check Out",cout?.check_out_time,"⏹",C.indigo,"—"]].map(([l,t,ic,c,sub])=>(
@@ -625,6 +629,8 @@ function EmpSalary({user, notify}) {
       {
         ([
           ["Days Present", report.presentDays],
+          ["Half Days", report.halfDays||0],
+          ["Absent Days", report.absentDays||0],
           ["Gross Earned", fmt(report.earnedGross||0)],
           ["Late Deductions", `-${fmt(report.lateDeductions||0)}`],
           ["CL used/allowed", `${report.clUsed||0}/${report.clAllowed||0}`],

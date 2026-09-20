@@ -1140,7 +1140,7 @@ app.get('/api/my-salary', auth(['employee','branch_admin']), async (req, res) =>
     res.json({
       salary, workingDays: divisor, presentDays, lateDays, clUsed, slUsed,
       clAllowed, slAllowed, clExcess, slExcess,
-      unauthLeaves, noShows, normalLates, excessLates,
+      unauthLeaves, noShows, normalLates, excessLates, halfDays, absentDays, paidDays,
       dailyRate, earnedGross, lateDeductions,
       leaveDeductions, noShowDeductions, earlyDeductions,
       earlyCheckouts, advanceDeduction, adjBonus, adjDeduction,
@@ -1206,10 +1206,9 @@ app.get('/api/salary-report', auth(['super_admin', 'org_admin', 'branch_admin'])
       const dailyRate = emp.salary / wdm;
       // paidDays based on actual attendance
     // absentDays/paidDays already calculated above
-        const absentDays = Math.max(0, wdim - presentDays);
-    const deductedDays = absentDays + (halfDays * 0.5);
-    const paidDays = Math.max(0, Math.min(30, 30 - deductedDays));
-    const earnedGross = paidDays * dailyRate;
+    const deductedDays2 = Math.max(0, absentDays) + (halfDays * 0.5);
+    const paidDays2 = Math.max(0, Math.min(30, 30 - deductedDays2));
+    const earnedGross = paidDays2 * dailyRate;
       const excessLates = Math.max(0, lateDays - (s.max_allowed_lates_per_month || 3));
       const lateDeductions = lateDays * (s.late_deduction_per_occ || 50) + excessLates * (s.excess_late_penalty || 100);
       const leaveDeductions = 0; // leave days already reduce paidDays
